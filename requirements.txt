@@ -6,3 +6,4 @@ matplotlib
 mne
 numpy
 neurokit2
+seaborn
