@@ -106,11 +106,11 @@ for index, row in sim_df.iterrows():
     # Create and display new plot images
     c1, c2, c3 = st.columns(3)
     with c1:
-        c1.image(create_plot_image(hr_data, "Heart Rate (HR)"), use_column_width=True)
+        c1.image(create_plot_image(hr_data, "Heart Rate (HR)"), use_container_width=True)
     with c2:
-        c2.image(create_plot_image(hrv_data, "HRV (LF/HF)"), use_column_width=True)
+        c2.image(create_plot_image(hrv_data, "HRV (LF/HF)"), use_container_width=True)
     with c3:
-        c3.image(create_plot_image(eda_data, "EDA (Simulated)"), use_column_width=True)
+        c3.image(create_plot_image(eda_data, "EDA (Simulated)"), use_container_width=True)
     
     # Update log
     log_placeholder.text_area("Log", value='\n'.join(event_log), height=200, key=f"log_{index}")
