@@ -32,10 +32,7 @@ def live_monitor_page():
 
     with col1:
         st.markdown("### Physiological Signals")
-        chart_placeholder_1 = st.empty()
-        chart_placeholder_2 = st.empty()
-        chart_placeholder_3 = st.empty()
-        st.markdown("---")
+        st.markdown("---") # Visual separator
         st.header("AI STATUS")
         status_placeholder = st.empty()
 
@@ -49,53 +46,58 @@ def live_monitor_page():
     # --- Live Simulation ---
     hr_data, hrv_data, eda_data = [], [], []
     event_log = ["System Initialized..."]
-    status_placeholder.success("STATUS: NORMAL")
-    log_placeholder.text_area("Log", value='\n'.join(event_log), height=200)
+
+    # Placeholders for the charts, to be updated in the loop
+    c1, c2, c3 = st.columns(3)
+    chart1_placeholder = c1.empty()
+    chart2_placeholder = c2.empty()
+    chart3_placeholder = c3.empty()
 
     # (Simulation parameters from your data files)
-    SEIZURE_START_SEC = 1238
+    SEIZURE_START_SEC = 1238 
     PRE_ICTAL_WINDOW_MINS = 10
     PRE_ICTAL_START_SEC = SEIZURE_START_SEC - (PRE_ICTAL_WINDOW_MINS * 60)
 
     for index, row in sim_df.iterrows():
         current_features = row[['HR', 'LF_HF_Ratio']].to_frame().T
-        
-        if PRE_ICTAL_START_SEC <= row['timestamp'] < SEIZURE_START_SEC:
-            eda_value = 1.0 + np.random.uniform(-0.2, 0.2)
-        else:
-            eda_value = row['EDA_Mean']
-        
         prediction = model.predict(current_features)[0]
-        
+
+        # THIS IS THE CRITICAL TRIGGER
+        if prediction == 1:
+            st.session_state.page = 'alert' # Change the page state
+            st.experimental_rerun()         # Immediately redraw the app
+            return                          # <-- BUG FIX: Stop this page from running further
+
         sim_time = datetime.timedelta(seconds=int(row['timestamp']))
-        
+
+        # Update the AI status display
         with status_placeholder.container():
             st.subheader(f"Patient Time Elapsed: {sim_time}")
-            if prediction == 1:
-                st.error("STATUS: SEIZURE RISK DETECTED")
-                if "RISK DETECTED" not in event_log[-1]:
-                    event_log.append(f"{sim_time}: AI detected potential pre-ictal signature.")
-            else:
-                st.success("STATUS: NORMAL")
-                if "NORMAL" not in event_log[-1]:
-                     event_log.append(f"{sim_time}: System status is normal.")
+            st.success("STATUS: NORMAL")
 
-        hr_data.append(row['HR']); hrv_data.append(row['LF_HF_Ratio']); eda_data.append(eda_value)
+        # Update the event log
+        log_placeholder.text_area("Log", value='\n'.join(event_log), height=200)
+
+        # Update data lists for charts
+        hr_data.append(row['HR'])
+        hrv_data.append(row['LF_HF_Ratio'])
+        eda_data.append(row['EDA_Mean'])
         if len(hr_data) > 30:
-            hr_data.pop(0); hrv_data.pop(0); eda_data.pop(0)
+            hr_data.pop(0)
+            hrv_data.pop(0)
+            eda_data.pop(0)
 
-        c1, c2, c3 = st.columns(3)
-        c1.image(create_plot_image(hr_data, "Heart Rate (HR)"), use_container_width=True)
-        c2.image(create_plot_image(hrv_data, "HRV (LF/HF)"), use_container_width=True)
-        c3.image(create_plot_image(eda_data, "EDA (Simulated)"), use_container_width=True)
-        
-        log_placeholder.text_area("Log", value='\n'.join(event_log), height=200, key=f"log_{index}")
+        # Update the charts by creating new images
+        chart1_placeholder.image(create_plot_image(hr_data, "Heart Rate (HR)"), use_container_width=True)
+        chart2_placeholder.image(create_plot_image(hrv_data, "HRV (LF/HF)"), use_container_width=True)
+        chart3_placeholder.image(create_plot_image(eda_data, "EDA (Simulated)"), use_container_width=True)
+
         time.sleep(1 / playback_speed)
 
+    # This code is now only reached if the simulation finishes with no alerts
     st.balloons()
-    event_log.append("Simulation Finished.")
+    event_log.append("Simulation Finished without incident.")
     log_placeholder.text_area("Log", value='\n'.join(event_log), height=200)
-
 
 # ======================================================================================
 # CLINICAL ANALYSIS PAGE FUNCTION
