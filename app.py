@@ -118,13 +118,13 @@ def clinical_analysis_page():
     
     st.pyplot(fig)
 
-    st.markdown("---")
-    st.header("Discussion Points for Medical Lead")
-    st.markdown("""
-    1.  **Does this data make sense?** Do the differences between the Normal and Pre-ictal groups align with clinical expectations?
-    2.  **Is our model's trade-off acceptable?** Our AI is very good at catching seizures (high recall) but produces many false alarms. Is this a reasonable starting point for a prototype?
-    3.  **What other physiological signs could we investigate?** Are there other biomarkers we could extract to improve the model's precision and reduce false alarms?
-    """)
+    # st.markdown("---")
+    # st.header("Discussion Points for Medical Lead")
+    # st.markdown("""
+    # 1.  **Does this data make sense?** Do the differences between the Normal and Pre-ictal groups align with clinical expectations?
+    # 2.  **Is our model's trade-off acceptable?** Our AI is very good at catching seizures (high recall) but produces many false alarms. Is this a reasonable starting point for a prototype?
+    # 3.  **What other physiological signs could we investigate?** Are there other biomarkers we could extract to improve the model's precision and reduce false alarms?
+    # """)
 
 # --- Helper function for plotting ---
 def create_plot_image(data, title):
