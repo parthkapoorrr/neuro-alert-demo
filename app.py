@@ -111,12 +111,12 @@ def clinical_analysis_page():
     st.title("Clinical Biomarker Validation")
     st.markdown("These plots show the biomarker distributions for Normal vs. Pre-ictal states from the training dataset. This helps validate the features used by the AI model.")
     
-    # Use Streamlit's theme for plots
-    st.set_option('deprecation.showPyplotGlobalUse', False)
-    
     # Import plotting libraries here to keep other pages light
     import matplotlib.pyplot as plt
     import seaborn as sns
+
+    # 💡 The problematic line below has been removed.
+    # st.set_option('deprecation.showPyplotGlobalUse', False) <--- DELETE THIS LINE
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     sns.boxplot(ax=axes[0], x='label', y='HR', data=master_df, palette="viridis").set(
