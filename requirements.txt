@@ -7,3 +7,4 @@ mne
 numpy
 neurokit2
 seaborn
+xgboost
