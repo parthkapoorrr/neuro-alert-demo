@@ -131,11 +131,12 @@ def analysis_page():
     if uploaded_file is not None:
         st.info("File uploaded. Reading and processing... This may take a moment.")
         
-        # --- THIS IS THE FIX for the BytesIO error ---
-        # We pass the 'uploaded_file' object directly to MNE.
-        # We do not save it to disk.
+        # --- THIS IS THE FIX for the UploadedFile error ---
+        # We read the file's .read() method to get the raw bytes,
+        # and pass those bytes directly to MNE.
         try:
-            raw = mne.io.read_raw_edf(uploaded_file, preload=True, verbose='error')
+            # Change is here: uploaded_file.read()
+            raw = mne.io.read_raw_edf(uploaded_file.read(), preload=True, verbose='error') 
         except Exception as e:
             st.error(f"Error reading .edf file: {e}")
             st.stop()
