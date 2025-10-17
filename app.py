@@ -17,7 +17,7 @@ st.set_page_config(page_title="NeuroAlert", page_icon="🧠", layout="wide")
 def load_assets():
     try:
         # Load your best and final 2-minute model and dataset
-        model = joblib.load('neuroalert_final_model.pkl')
+        model = joblib.load('neuroalert_model_2min.pkl')
         master_df = pd.read_csv('neuroalert_dataset_2min_window.csv')
         return model, master_df
     except FileNotFoundError:
@@ -43,7 +43,7 @@ def file_upload_page():
 
     if uploaded_file is not None:
         if model is None:
-            st.error("Model file ('neuroalert_final_model.pkl') not found in the repository. Please upload it.")
+            st.error("Model file ('neuroalert_model_2min.pkl') not found. Please ensure it is in the GitHub repository.")
             return
 
         st.success(f"File '{uploaded_file.name}' uploaded successfully.")
@@ -63,6 +63,11 @@ def file_upload_page():
 
                 results_placeholder = st.empty()
                 results = []
+
+                feature_columns = [
+                    'HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn',
+                    'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI'
+                ]
 
                 for i in range(0, len(ecg_signal) - segment_length, segment_length):
                     segment_ecg = ecg_signal[i : i + segment_length]
@@ -85,7 +90,7 @@ def file_upload_page():
                             'SD1/SD2': hrv_features['HRV_SD1'].iloc[0] / hrv_features['HRV_SD2'].iloc[0] if hrv_features['HRV_SD2'].iloc[0] != 0 else 0,
                             'CSI': hrv_features['HRV_CSI'].iloc[0]
                         }
-                        features_df = pd.DataFrame([features])
+                        features_df = pd.DataFrame([features])[feature_columns]
 
                         prediction = model.predict(features_df)[0]
                         prediction_proba = model.predict_proba(features_df)[0]
