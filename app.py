@@ -8,6 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import datetime
+import time # <-- FIX: Import the 'time' library
+import os   # <-- FIX: Import the 'os' library
 
 # --- Page Configuration ---
 st.set_page_config(page_title="NeuroAlert", page_icon="🧠", layout="wide")
@@ -32,24 +34,36 @@ def find_ecg_channel(channel_list):
     return None
 
 # ======================================================================================
-# PAGE 1: FILE UPLOAD AND PREDICTION (The Final Product)
+# PAGE 1: FILE UPLOAD AND PREDICTION
 # ======================================================================================
 def file_upload_page():
     st.title("NeuroAlert: Seizure Risk Prediction")
-    st.markdown("Upload a standard `.edf` file with an ECG channel to analyze it for pre-ictal seizure risk, one 2-minute segment at a time.")
+    st.markdown("Upload a standard `.edf` file with an ECG channel to analyze it for pre-ictal seizure risk.")
 
     uploaded_file = st.file_uploader("Choose an .edf file", type="edf")
 
     if uploaded_file is not None:
         if model is None:
-            st.error("Model file ('neuroalert_model_2min.pkl') not found in the repository."); return
+            st.error("Model file ('neuroalert_model_2min.pkl') not found. Please ensure it is in the GitHub repository.")
+            return
 
         st.success(f"File '{uploaded_file.name}' uploaded successfully.")
         
         if st.button("Analyze Full Recording"):
+            temp_file_path = None # Initialize variable
             try:
-                raw = mne.io.read_raw_edf(io.BytesIO(uploaded_file.read()), preload=True, verbose='error')
+                # --- THIS IS THE FIX ---
+                # Save the uploaded file to a temporary location on disk
+                with open(uploaded_file.name, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                temp_file_path = uploaded_file.name
+                
+                # Now, pass the FILENAME to mne, not the in-memory object
+                raw = mne.io.read_raw_edf(temp_file_path, preload=True, verbose='error')
+                # --- END OF FIX ---
+                
                 sampling_rate = int(raw.info['sfreq'])
+                
                 ecg_channel = find_ecg_channel(raw.info['ch_names'])
                 if not ecg_channel:
                     st.error("Could not find a standard ECG channel in this file."); return
@@ -95,54 +109,36 @@ def file_upload_page():
                         results_placeholder.text_area("Analysis Log", "\n".join(results), height=300)
                         time.sleep(0.1)
                         continue
+
                 st.success("Full file analysis complete.")
             except Exception as e:
                 st.error(f"An error occurred: {e}")
+            finally:
+                # This ensures the temporary file is deleted even if an error occurs
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
 
 # ======================================================================================
-# PAGE 2: OUR RESEARCH AND FINDINGS
+# PAGE 2: CLINICAL ANALYSIS
 # ======================================================================================
-def research_findings_page():
-    st.title("Our Research & Findings")
-    st.markdown("""
-    This project began with a single question: **Can we find a reliable, measurable signal in the body's cardiovascular system that precedes an epileptic seizure?** This page documents our journey from raw clinical data to the discovery of a predictive signature.
-    """)
-
-    st.header("Step 1: The Hypothesis")
-    st.markdown("""
-    Based on medical literature, we hypothesized that the **pre-ictal phase**—the period up to 10 minutes before a seizure—causes dysregulation in the autonomic nervous system. This should be detectable in Heart Rate Variability (HRV) metrics.
-    """)
-
-    st.header("Step 2: The Data")
-    st.markdown("""
-    We processed over 12GB of raw clinical data from the CHB-MIT dataset, extracting 2-minute segments of pure ECG signals from 24 different patients. We labeled these segments as either 'Normal' or 'Pre-ictal'.
-    """)
-    
-    st.header("Step 3: The Findings")
-    st.markdown("""
-    Our analysis revealed a clear and statistically significant difference in key biomarkers between the two states.
-    """)
-
+def clinical_analysis_page():
+    st.title("Clinical Biomarker Validation")
     if master_df is None:
         st.error("Dataset ('neuroalert_dataset_2min_window.csv') not found."); return
         
+    st.markdown("Biomarker distributions from the CHB-MIT training data.")
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    sns.boxplot(ax=axes[0], x='label', y='HR', data=master_df).set(title='Finding #1: Heart Rate Increases', xticklabels=['Normal', 'Pre-ictal'])
-    sns.boxplot(ax=axes[1], x='label', y='LF/HF', data=master_df).set(title='Finding #2: HRV Balance Shifts', xticklabels=['Normal', 'Pre-ictal'])
+    sns.boxplot(ax=axes[0], x='label', y='HR', data=master_df).set(title='Heart Rate Distribution', xticklabels=['Normal', 'Pre-ictal'])
+    sns.boxplot(ax=axes[1], x='label', y='LF/HF', data=master_df).set(title='HRV (LF/HF Ratio) Distribution', xticklabels=['Normal', 'Pre-ictal'])
     st.pyplot(fig)
-    
-    st.header("Step 4: The Conclusion")
-    st.success("""
-    **Our findings confirmed the hypothesis.** A predictive signature does exist. These results gave us the confidence to build our final AI model, which is now available for you to use on the "Analyze New File" page.
-    """)
 
 # ======================================================================================
 # MAIN APP NAVIGATION
 # ======================================================================================
 st.sidebar.title("App Navigation")
-page = st.sidebar.selectbox("Choose a page", ["Analyze New File", "Our Research & Findings"])
+page = st.sidebar.selectbox("Choose a page", ["Analyze New File", "Clinical Analysis"])
 
 if page == "Analyze New File":
     file_upload_page()
-elif page == "Our Research & Findings":
-    research_findings_page()
+elif page == "Clinical Analysis":
+    clinical_analysis_page()
