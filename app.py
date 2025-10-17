@@ -8,8 +8,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import datetime
-import time # <-- FIX #1: Import the 'time' library
-import os   # <-- FIX #1: Import the 'os' library
 
 # --- Page Configuration ---
 st.set_page_config(page_title="NeuroAlert", page_icon="🧠", layout="wide")
@@ -38,29 +36,21 @@ def find_ecg_channel(channel_list):
 # ======================================================================================
 def file_upload_page():
     st.title("NeuroAlert: Seizure Risk Prediction")
-    st.markdown("Upload a standard `.edf` file with an ECG channel to analyze it for pre-ictal seizure risk.")
+    # --- THIS TEXT IS NOW CORRECTED ---
+    st.markdown("Upload a standard `.edf` file with an ECG channel to analyze it for pre-ictal seizure risk, one 2-minute segment at a time.")
 
     uploaded_file = st.file_uploader("Choose an .edf file", type="edf")
 
     if uploaded_file is not None:
         if model is None:
-            st.error("Model file ('neuroalert_model_2min.pkl') not found. Please upload it to the GitHub repository.")
+            st.error("Model file ('neuroalert_model_2min.pkl') not found. Please ensure it is in the GitHub repository.")
             return
 
         st.success(f"File '{uploaded_file.name}' uploaded successfully.")
         
         if st.button("Analyze Full Recording"):
-            # --- FIX #2: Correctly handle the temporary file ---
-            temp_file_path = None
             try:
-                # Save the uploaded file to a temporary location
-                with open(uploaded_file.name, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                temp_file_path = uploaded_file.name
-                
-                # Now, pass the FILENAME to mne
-                raw = mne.io.read_raw_edf(temp_file_path, preload=True, verbose='error')
-                
+                raw = mne.io.read_raw_edf(io.BytesIO(uploaded_file.read()), preload=True, verbose='error')
                 sampling_rate = int(raw.info['sfreq'])
                 
                 ecg_channel = find_ecg_channel(raw.info['ch_names'])
@@ -120,13 +110,8 @@ def file_upload_page():
                         continue
 
                 st.success("Full file analysis complete.")
-
             except Exception as e:
                 st.error(f"An error occurred: {e}")
-            finally:
-                # Clean up the temporary file
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
 
 # ======================================================================================
 # PAGE 2: CLINICAL ANALYSIS
