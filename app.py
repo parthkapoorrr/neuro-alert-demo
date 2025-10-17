@@ -35,6 +35,7 @@ def find_ecg_channel(channel_list):
 # ======================================================================================
 # PAGE 1: FILE UPLOAD AND PREDICTION
 # ======================================================================================
+# Replace the entire file_upload_page function with this corrected version
 def file_upload_page():
     st.title("NeuroAlert: Seizure Risk Prediction")
     st.markdown("Upload a standard `.edf` file with an ECG channel to analyze it for pre-ictal seizure risk.")
@@ -43,14 +44,22 @@ def file_upload_page():
 
     if uploaded_file is not None:
         if model is None:
-            st.error("Model file ('neuroalert_model_2min.pkl') not found. Please ensure it is in the GitHub repository.")
+            st.error("Model file ('neuroalert_model_2min.pkl') not found. Please upload it to the GitHub repository.")
             return
 
         st.success(f"File '{uploaded_file.name}' uploaded successfully.")
         
         if st.button("Analyze Full Recording"):
             try:
-                raw = mne.io.read_raw_edf(io.BytesIO(uploaded_file.read()), preload=True, verbose='error')
+                # --- THIS IS THE FIX ---
+                # Save the uploaded file to a temporary location
+                with open(uploaded_file.name, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                # Now, pass the FILENAME to mne
+                raw = mne.io.read_raw_edf(uploaded_file.name, preload=True, verbose='error')
+                # --- END OF FIX ---
+
                 sampling_rate = int(raw.info['sfreq'])
                 
                 ecg_channel = find_ecg_channel(raw.info['ch_names'])
@@ -63,7 +72,7 @@ def file_upload_page():
 
                 results_placeholder = st.empty()
                 results = []
-
+                
                 feature_columns = [
                     'HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn',
                     'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI'
@@ -110,8 +119,12 @@ def file_upload_page():
                         continue
 
                 st.success("Full file analysis complete.")
+                os.remove(uploaded_file.name) # Clean up the temporary file
+
             except Exception as e:
                 st.error(f"An error occurred: {e}")
+                if os.path.exists(uploaded_file.name):
+                    os.remove(uploaded_file.name) # Clean up even if there's an error
 
 # ======================================================================================
 # PAGE 2: CLINICAL ANALYSIS
