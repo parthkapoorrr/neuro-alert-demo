@@ -59,26 +59,44 @@ def find_ecg_channel(channel_list):
     return None
 
 def extract_features_from_signal(segment_ecg, sampling_rate):
-    """Extracts our 12 key biomarkers from a raw ECG signal segment."""
+    """
+    Extracts our 12 key biomarkers from a raw ECG signal segment.
+    Returns a dictionary of features or None if processing fails.
+    """
     try:
         df_feat, info = nk.ecg_process(segment_ecg, sampling_rate=sampling_rate)
+        
+        # Quality check: Need at least 20 heartbeats to get reliable HRV
         if len(info['ECG_R_Peaks']) < 20:
             st.write(f"Skipping segment: Not enough R-peaks found ({len(info['ECG_R_Peaks'])}).")
             return None
+            
         hrv_features = nk.hrv(info['ECG_R_Peaks'], sampling_rate=sampling_rate)
+        
+        # Calculate SD1/SD2 ratio safely
         sd1 = hrv_features['HRV_SD1'].iloc[0]
         sd2 = hrv_features['HRV_SD2'].iloc[0]
-        sd1_sd2_ratio = sd1 / sd2 if sd2 != 0 else 0
+        sd1_sd2_ratio = sd1 / sd2 if sd2 != 0 else 0 # <-- Variable defined here
+
         features = {
-            'HR': np.mean(df_feat['ECG_Rate']), 'MeanNN': hrv_features['HRV_MeanNN'].iloc[0],
-            'SDNN': hrv_features['HRV_SDNN'].iloc[0], 'RMSSD': hrv_features['HRV_RMSSD'].iloc[0],
-            'pNN50': hrv_features['HRV_pNN50'].iloc[0], 'SampEn': hrv_features['HRV_SampEn'].iloc[0],
-            'HRV_HTI': hrv_features['HRV_HTI'].iloc[0], 'LF/HF': hrv_features['HRV_LFHF'].iloc[0],
-            'SD1': sd1, 'SD2': sd2, 'SD1/SD2': sd1_sd2_route, 'CSI': hrv_features['HRV_CSI'].iloc[0],
+            'HR': np.mean(df_feat['ECG_Rate']),
+            'MeanNN': hrv_features['HRV_MeanNN'].iloc[0],
+            'SDNN': hrv_features['HRV_SDNN'].iloc[0],
+            'RMSSD': hrv_features['HRV_RMSSD'].iloc[0],
+            'pNN50': hrv_features['HRV_pNN50'].iloc[0],
+            'SampEn': hrv_features['HRV_SampEn'].iloc[0],
+            'HRV_HTI': hrv_features['HRV_HTI'].iloc[0],
+            'LF/HF': hrv_features['HRV_LFHF'].iloc[0],
+            'SD1': sd1,
+            'SD2': sd2,
+            'SD1/SD2': sd1_sd2_ratio, # <-- FIX: Changed 'sd1_sd2_route' to 'sd1_sd2_ratio'
+            'CSI': hrv_features['HRV_CSI'].iloc[0],
         }
         return features
+        
     except Exception as e:
-        st.write(f"Error during feature extraction: {e}")
+        # This will now correctly show the NameError from the line above if it fails
+        st.error(f"Error during feature extraction: {e}")
         return None
 
 # --- 3. Page Definitions ---
