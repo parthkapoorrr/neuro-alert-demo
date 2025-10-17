@@ -105,7 +105,7 @@ def research_page():
     """Page 1: Displays the research and medical foundation."""
     st.title("Our Research: The 10-Minute Warning 💓")
     st.markdown("This page details the medical science behind NeuroAlert's predictive technology.")
-    # (Rest of the research page content is unchanged)
+
     st.header("The Pre-Ictal Phase: A Window of Opportunity")
     st.markdown(
         """
@@ -116,28 +116,32 @@ def research_page():
         heart rate and breathing, becomes dysregulated.
         """
     )
-    st.header("Heart Rate Variability (HRV) as a Biomarker")
+
+    st.header("ECG as the Source for ANS Biomarkers")
     st.markdown(
         """
-        Instead of trying to detect the seizure in the brain (with EEG), our approach is to detect the *body's reaction* to the pre-ictal phase. We do this by analyzing **Heart Rate Variability (HRV)** from a simple ECG signal.
+        Instead of trying to detect the seizure in the brain (with EEG), our approach is to detect the *body's reaction* to the pre-ictal phase. We do this by analyzing the **ECG (Electrocardiogram) signal**.
+        
+        The ECG signal is incredibly rich. From it, we can measure both the basic **Heart Rate (HR)** and, more 
+        importantly, **Heart Rate Variability (HRV)**.
         
         HRV is not just the heart rate, but the tiny, millisecond-level variations *between* heartbeats. A healthy
         heart is not a perfect metronome; it has high variability. During the pre-ictal phase, this variability
         changes in predictable ways.
         
-        **Our model was trained on 12 key HRV-derived biomarkers:**
-        - **Time-Domain:** MeanNN, SDNN, RMSSD, pNN50
-        - **Frequency-Domain:** LF/HF ratio
-        - **Non-Linear (Poincaré):** SD1, SD2, SD1/SD2 ratio, CSI, HRV_HTI
-        - **Entropy:** SampEn
+        **Our model was trained on 12 key biomarkers, all derived from the ECG signal:**
         - **Basic:** Heart Rate (HR)
+        - **HRV Time-Domain:** MeanNN, SDNN, RMSSD, pNN50
+        - **HRV Frequency-Domain:** LF/HF ratio
+        - **HRV Non-Linear (Poincaré):** SD1, SD2, SD1/SD2 ratio, CSI, HRV_HTI
+        - **HRV Entropy:** SampEn
         
         By feeding these 12 biomarkers from 2-minute windows of ECG data into an XGBoost machine learning model,
         NeuroAlert learns the complex "signature" of the pre-ictal phase.
         """
     )
+    
     st.success("Our system is designed to identify this signature and provide a **10-minute warning** *before* the seizure begins.")
-
 
 def analysis_page():
     """Page 2: The analysis tool for new files."""
