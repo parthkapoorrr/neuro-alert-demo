@@ -1,11 +1,6 @@
 streamlit
-pandas
-scikit-learn
-joblib
-matplotlib
 mne
-numpy
 neurokit2
-seaborn
 xgboost
-imbalanced-learn
+scikit-learn
+imblearn
