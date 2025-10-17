@@ -156,19 +156,17 @@ def analysis_page():
         if st.button("Analyze Full Recording"):
             
             # --- THIS IS THE CORRECTED FILE-READING LOGIC (FROM YOUR OLD CODE) ---
+            # This code should be inside the 'if st.button("Analyze Full Recording"):' block
+
             temp_file_path = None # Initialize variable
             try:
                 # 1. Save the uploaded file to a temporary location on disk
-                # We use .getbuffer() to get the bytes from the UploadedFile object
                 with open(uploaded_file.name, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 temp_file_path = uploaded_file.name
                 
                 # 2. Now, pass the FILENAME (a string path) to mne.
-                # This is the method that works.
                 raw = mne.io.read_raw_edf(temp_file_path, preload=True, verbose='error')
-                
-                # --- END OF FIX ---
 
                 sampling_rate = int(raw.info['sfreq'])
                 ecg_channel = find_ecg_channel(raw.info['ch_names'])
@@ -180,7 +178,7 @@ def analysis_page():
                 st.success(f"Found ECG channel: '{ecg_channel}'. Analyzing...")
                 ecg_signal = raw.get_data(picks=[ecg_channel])[0]
                 
-                # --- Analysis Loop (Unchanged) ---
+                # --- Analysis Loop ---
                 SEGMENT_DURATION_SECS = 120
                 segment_length_samples = SEGMENT_DURATION_SECS * sampling_rate
                 
@@ -197,7 +195,7 @@ def analysis_page():
                     st.error("No valid data segments could be processed. File may be too noisy or short.")
                     st.stop()
 
-                # --- Prediction (Unchanged) ---
+                # --- Prediction ---
                 st.subheader("Analysis Complete: Results")
                 feature_df = pd.DataFrame(all_features_list)
                 feature_columns = [
@@ -226,12 +224,10 @@ def analysis_page():
                             delta=f"{100-confidence_pct:.1f}% Confidence", delta_color="normal"
                         )
                 
-                # ... (the code for the 'for' loop and metrics is above this) ...
-
                 with st.expander("Show Raw Feature Data"):
                     st.dataframe(results_df)
-                
-                # --- NEW: MAJORITY VOTE VERDICT LOGIC ---
+
+                # --- NEW: MAJORITY VOTE VERDICT LOGIC (Inside the 'try' block) ---
                 st.subheader("Final Summary Verdict", divider="rainbow")
                 
                 # Count the occurrences of each prediction (0 for Normal, 1 for Pre-ictal)
@@ -263,12 +259,6 @@ def analysis_page():
 
             except Exception as e:
                 st.error(f"An error occurred during analysis: {e}")
-            
-            finally:
-                # --- Cleanup ---
-                # This ensures the temporary file is deleted even if an error occurs
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
             
             finally:
                 # --- Cleanup ---
