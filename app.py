@@ -135,8 +135,14 @@ def analysis_page():
         # We read the file's .read() method to get the raw bytes,
         # and pass those bytes directly to MNE.
         try:
-            # Change is here: uploaded_file.read()
-            raw = mne.io.read_raw_edf(uploaded_file.read(), preload=True, verbose='error') 
+            # --- FINAL FIX ---
+            # 1. Rewind the file to the beginning
+            uploaded_file.seek(0)
+            # 2. Read all bytes from the file
+            raw_bytes = uploaded_file.read()
+            # 3. Pass those bytes to MNE
+            raw = mne.io.read_raw_edf(raw_bytes, preload=True, verbose='error') 
+
         except Exception as e:
             st.error(f"Error reading .edf file: {e}")
             st.stop()
