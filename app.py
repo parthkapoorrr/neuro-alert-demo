@@ -195,29 +195,30 @@ def analysis_page():
                     st.error("No valid data segments could be processed. File may be too noisy or short.")
                     st.stop()
 
-                # --- Prediction ---
                 # --- Prediction (Code from before) ---
+                # --- Prediction ---
                 st.subheader("Analysis Complete: Results")
                 feature_df = pd.DataFrame(all_features_list)
                 feature_columns = [
                     'HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn',
                     'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI'
                 ]
+                
+                # We need a dataframe with just these columns for prediction
                 X_predict = feature_df[feature_columns]
+                
                 predictions = model.predict(X_predict)
                 probabilities = model.predict_proba(X_predict)[:, 1]
                 
+                # Create the results_df for metrics and the final expander
                 results_df = feature_df[['timestamp_sec']].copy()
                 results_df['Prediction'] = predictions
                 results_df['Confidence'] = probabilities
                 
-                # --- 1. FINAL VERDICT (MOVED UP) ---
+                # --- 1. FINAL VERDICT ---
                 st.subheader("Final Summary Verdict", divider="rainbow")
                 
-                # Count the occurrences of each prediction (0 for Normal, 1 for Pre-ictal)
                 prediction_counts = results_df['Prediction'].value_counts()
-                
-                # Safely get the counts, defaulting to 0 if a class isn't present
                 normal_count = prediction_counts.get(0, 0)
                 pre_ictal_count = prediction_counts.get(1, 0)
                 total_segments = len(results_df)
@@ -227,22 +228,40 @@ def analysis_page():
                 st.write(f"- **Pre-ictal Segments:** {pre_ictal_count} out of {total_segments}")
 
                 if pre_ictal_count > normal_count:
-                    # If the majority of segments are pre-ictal
                     st.error(
                         f"**Verdict: 🔴 PRE-ICTAL RISK DETECTED**\n\n"
                         f"The majority of analyzed segments ({pre_ictal_count}/{total_segments}) were "
                         f"flagged as pre-ictal. Please review."
                     )
                 else:
-                    # If the majority are normal (or it's a tie, favoring normal)
                     st.success(
                         f"**Verdict: 🟢 MAJORITY NORMAL**\n\n"
                         f"The majority of analyzed segments ({normal_count}/{total_segments}) appear to be in a normal baseline state."
                     )
 
-                # --- 2. SEGMENT-BY-SEGMENT ANALYSIS (MOVED DOWN) ---
+                # --- 2. NEW: BIOMARKER TABLE ---
+                st.subheader("Biomarker Levels per Segment", divider="gray")
+                
+                # Create a clean dataframe for display
+                # We use the original 'feature_df' which has all the biomarker data
+                display_df = feature_df.copy()
+                
+                # Format the timestamp column to be human-readable
+                display_df['Timestamp'] = display_df['timestamp_sec'].apply(
+                    lambda x: time.strftime('%H:%M:%S', time.gmtime(x))
+                )
+                
+                # Reorder columns so Timestamp is first, then the 12 biomarkers
+                display_columns = ['Timestamp'] + feature_columns 
+                
+                # Display the biomarker data in a table
+                st.dataframe(display_df[display_columns])
+
+
+                # --- 3. SEGMENT-BY-SEGMENT LOG ---
                 st.subheader("Segment-by-Segment Log", divider="gray")
 
+                # This loop uses 'results_df' to show the individual verdicts
                 for _, row in results_df.iterrows():
                     timestamp = time.strftime('%H:%M:%S', time.gmtime(row['timestamp_sec']))
                     confidence_pct = row['Confidence'] * 100
@@ -257,13 +276,10 @@ def analysis_page():
                             delta=f"{100-confidence_pct:.1f}% Confidence", delta_color="normal"
                         )
                 
-                # --- 3. RAW DATA (STAYS AT THE END) ---
-                with st.expander("Show Raw Feature Data"):
+                # --- 4. RAW PREDICTION DATA (Expander) ---
+                # I've renamed this expander to be clearer
+                with st.expander("Show Raw Prediction Data (Timestamp, Prediction, Confidence)"):
                     st.dataframe(results_df)
-
-            # This 'except' block should be right after the code above
-            except Exception as e:
-                st.error(f"An error occurred during analysis: {e}")
 
             except Exception as e:
                 st.error(f"An error occurred during analysis: {e}")
