@@ -8,6 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import datetime
+import time # <-- FIX #1: Import the 'time' library
+import os   # <-- FIX #1: Import the 'os' library
 
 # --- Page Configuration ---
 st.set_page_config(page_title="NeuroAlert", page_icon="🧠", layout="wide")
@@ -16,7 +18,6 @@ st.set_page_config(page_title="NeuroAlert", page_icon="🧠", layout="wide")
 @st.cache_resource
 def load_assets():
     try:
-        # Load your best and final 2-minute model and dataset
         model = joblib.load('neuroalert_model_2min.pkl')
         master_df = pd.read_csv('neuroalert_dataset_2min_window.csv')
         return model, master_df
@@ -35,7 +36,6 @@ def find_ecg_channel(channel_list):
 # ======================================================================================
 # PAGE 1: FILE UPLOAD AND PREDICTION
 # ======================================================================================
-# Replace the entire file_upload_page function with this corrected version
 def file_upload_page():
     st.title("NeuroAlert: Seizure Risk Prediction")
     st.markdown("Upload a standard `.edf` file with an ECG channel to analyze it for pre-ictal seizure risk.")
@@ -50,16 +50,17 @@ def file_upload_page():
         st.success(f"File '{uploaded_file.name}' uploaded successfully.")
         
         if st.button("Analyze Full Recording"):
+            # --- FIX #2: Correctly handle the temporary file ---
+            temp_file_path = None
             try:
-                # --- THIS IS THE FIX ---
                 # Save the uploaded file to a temporary location
                 with open(uploaded_file.name, "wb") as f:
                     f.write(uploaded_file.getbuffer())
+                temp_file_path = uploaded_file.name
                 
                 # Now, pass the FILENAME to mne
-                raw = mne.io.read_raw_edf(uploaded_file.name, preload=True, verbose='error')
-                # --- END OF FIX ---
-
+                raw = mne.io.read_raw_edf(temp_file_path, preload=True, verbose='error')
+                
                 sampling_rate = int(raw.info['sfreq'])
                 
                 ecg_channel = find_ecg_channel(raw.info['ch_names'])
@@ -72,7 +73,7 @@ def file_upload_page():
 
                 results_placeholder = st.empty()
                 results = []
-                
+
                 feature_columns = [
                     'HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn',
                     'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI'
@@ -80,6 +81,7 @@ def file_upload_page():
 
                 for i in range(0, len(ecg_signal) - segment_length, segment_length):
                     segment_ecg = ecg_signal[i : i + segment_length]
+                    time_stamp = str(datetime.timedelta(seconds=int(i / sampling_rate)))
                     
                     try:
                         df_feat, info = nk.ecg_process(segment_ecg, sampling_rate=sampling_rate)
@@ -104,7 +106,6 @@ def file_upload_page():
                         prediction = model.predict(features_df)[0]
                         prediction_proba = model.predict_proba(features_df)[0]
                         
-                        time_stamp = str(datetime.timedelta(seconds=int(i / sampling_rate)))
                         if prediction == 1:
                             results.append(f"🔴 {time_stamp}: SEIZURE RISK DETECTED (Confidence: {prediction_proba[1]:.1%})")
                         else:
@@ -119,12 +120,13 @@ def file_upload_page():
                         continue
 
                 st.success("Full file analysis complete.")
-                os.remove(uploaded_file.name) # Clean up the temporary file
 
             except Exception as e:
                 st.error(f"An error occurred: {e}")
-                if os.path.exists(uploaded_file.name):
-                    os.remove(uploaded_file.name) # Clean up even if there's an error
+            finally:
+                # Clean up the temporary file
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
 
 # ======================================================================================
 # PAGE 2: CLINICAL ANALYSIS
