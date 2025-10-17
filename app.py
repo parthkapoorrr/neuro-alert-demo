@@ -226,11 +226,49 @@ def analysis_page():
                             delta=f"{100-confidence_pct:.1f}% Confidence", delta_color="normal"
                         )
                 
+                # ... (the code for the 'for' loop and metrics is above this) ...
+
                 with st.expander("Show Raw Feature Data"):
                     st.dataframe(results_df)
+                
+                # --- NEW: MAJORITY VOTE VERDICT LOGIC ---
+                st.subheader("Final Summary Verdict", divider="rainbow")
+                
+                # Count the occurrences of each prediction (0 for Normal, 1 for Pre-ictal)
+                prediction_counts = results_df['Prediction'].value_counts()
+                
+                # Safely get the counts, defaulting to 0 if a class isn't present
+                normal_count = prediction_counts.get(0, 0)
+                pre_ictal_count = prediction_counts.get(1, 0)
+                total_segments = len(results_df)
+
+                st.write(f"**Analysis Breakdown:**")
+                st.write(f"- **Normal Segments:** {normal_count} out of {total_segments}")
+                st.write(f"- **Pre-ictal Segments:** {pre_ictal_count} out of {total_segments}")
+
+                if pre_ictal_count > normal_count:
+                    # If the majority of segments are pre-ictal
+                    st.error(
+                        f"**Verdict: 🔴 PRE-ICTAL RISK DETECTED**\n\n"
+                        f"The majority of analyzed segments ({pre_ictal_count}/{total_segments}) were "
+                        f"flagged as pre-ictal. Please review."
+                    )
+                else:
+                    # If the majority are normal (or it's a tie, favoring normal)
+                    st.success(
+                        f"**Verdict: 🟢 MAJORITY NORMAL**\n\n"
+                        f"The majority of analyzed segments ({normal_count}/{total_segments}) appear to be in a normal baseline state."
+                    )
+                # --- END OF NEW CODE ---
 
             except Exception as e:
                 st.error(f"An error occurred during analysis: {e}")
+            
+            finally:
+                # --- Cleanup ---
+                # This ensures the temporary file is deleted even if an error occurs
+                if temp_file_path and os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
             
             finally:
                 # --- Cleanup ---
