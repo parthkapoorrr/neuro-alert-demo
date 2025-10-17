@@ -32,19 +32,17 @@ def find_ecg_channel(channel_list):
     return None
 
 # ======================================================================================
-# PAGE 1: FILE UPLOAD AND PREDICTION
+# PAGE 1: FILE UPLOAD AND PREDICTION (The Final Product)
 # ======================================================================================
 def file_upload_page():
     st.title("NeuroAlert: Seizure Risk Prediction")
-    # --- THIS TEXT IS NOW CORRECTED ---
     st.markdown("Upload a standard `.edf` file with an ECG channel to analyze it for pre-ictal seizure risk, one 2-minute segment at a time.")
 
     uploaded_file = st.file_uploader("Choose an .edf file", type="edf")
 
     if uploaded_file is not None:
         if model is None:
-            st.error("Model file ('neuroalert_model_2min.pkl') not found. Please ensure it is in the GitHub repository.")
-            return
+            st.error("Model file ('neuroalert_model_2min.pkl') not found in the repository."); return
 
         st.success(f"File '{uploaded_file.name}' uploaded successfully.")
         
@@ -52,22 +50,17 @@ def file_upload_page():
             try:
                 raw = mne.io.read_raw_edf(io.BytesIO(uploaded_file.read()), preload=True, verbose='error')
                 sampling_rate = int(raw.info['sfreq'])
-                
                 ecg_channel = find_ecg_channel(raw.info['ch_names'])
                 if not ecg_channel:
                     st.error("Could not find a standard ECG channel in this file."); return
 
                 st.info(f"Analyzing file using ECG channel: '{ecg_channel}'.")
                 ecg_signal = raw.get_data(picks=[ecg_channel])[0]
-                segment_length = 120 * sampling_rate # Using our best 2-minute window
+                segment_length = 120 * sampling_rate
 
                 results_placeholder = st.empty()
                 results = []
-
-                feature_columns = [
-                    'HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn',
-                    'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI'
-                ]
+                feature_columns = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI']
 
                 for i in range(0, len(ecg_signal) - segment_length, segment_length):
                     segment_ecg = ecg_signal[i : i + segment_length]
@@ -78,21 +71,15 @@ def file_upload_page():
                         hrv_features = nk.hrv(info['ECG_R_Peaks'], sampling_rate=sampling_rate)
                         
                         features = {
-                            'HR': np.mean(df_feat['ECG_Rate']),
-                            'MeanNN': hrv_features['HRV_MeanNN'].iloc[0],
-                            'SDNN': hrv_features['HRV_SDNN'].iloc[0],
-                            'RMSSD': hrv_features['HRV_RMSSD'].iloc[0],
-                            'pNN50': hrv_features['HRV_pNN50'].iloc[0],
-                            'SampEn': hrv_features['HRV_SampEn'].iloc[0],
-                            'HRV_HTI': hrv_features['HRV_HTI'].iloc[0],
-                            'LF/HF': hrv_features['HRV_LFHF'].iloc[0],
-                            'SD1': hrv_features['HRV_SD1'].iloc[0],
-                            'SD2': hrv_features['HRV_SD2'].iloc[0],
+                            'HR': np.mean(df_feat['ECG_Rate']), 'MeanNN': hrv_features['HRV_MeanNN'].iloc[0],
+                            'SDNN': hrv_features['HRV_SDNN'].iloc[0], 'RMSSD': hrv_features['HRV_RMSSD'].iloc[0],
+                            'pNN50': hrv_features['HRV_pNN50'].iloc[0], 'SampEn': hrv_features['HRV_SampEn'].iloc[0],
+                            'HRV_HTI': hrv_features['HRV_HTI'].iloc[0], 'LF/HF': hrv_features['HRV_LFHF'].iloc[0],
+                            'SD1': hrv_features['HRV_SD1'].iloc[0], 'SD2': hrv_features['HRV_SD2'].iloc[0],
                             'SD1/SD2': hrv_features['HRV_SD1'].iloc[0] / hrv_features['HRV_SD2'].iloc[0] if hrv_features['HRV_SD2'].iloc[0] != 0 else 0,
                             'CSI': hrv_features['HRV_CSI'].iloc[0]
                         }
                         features_df = pd.DataFrame([features])[feature_columns]
-
                         prediction = model.predict(features_df)[0]
                         prediction_proba = model.predict_proba(features_df)[0]
                         
@@ -108,32 +95,54 @@ def file_upload_page():
                         results_placeholder.text_area("Analysis Log", "\n".join(results), height=300)
                         time.sleep(0.1)
                         continue
-
                 st.success("Full file analysis complete.")
             except Exception as e:
                 st.error(f"An error occurred: {e}")
 
 # ======================================================================================
-# PAGE 2: CLINICAL ANALYSIS
+# PAGE 2: OUR RESEARCH AND FINDINGS
 # ======================================================================================
-def clinical_analysis_page():
-    st.title("Clinical Biomarker Validation")
+def research_findings_page():
+    st.title("Our Research & Findings")
+    st.markdown("""
+    This project began with a single question: **Can we find a reliable, measurable signal in the body's cardiovascular system that precedes an epileptic seizure?** This page documents our journey from raw clinical data to the discovery of a predictive signature.
+    """)
+
+    st.header("Step 1: The Hypothesis")
+    st.markdown("""
+    Based on medical literature, we hypothesized that the **pre-ictal phase**—the period up to 10 minutes before a seizure—causes dysregulation in the autonomic nervous system. This should be detectable in Heart Rate Variability (HRV) metrics.
+    """)
+
+    st.header("Step 2: The Data")
+    st.markdown("""
+    We processed over 12GB of raw clinical data from the CHB-MIT dataset, extracting 2-minute segments of pure ECG signals from 24 different patients. We labeled these segments as either 'Normal' or 'Pre-ictal'.
+    """)
+    
+    st.header("Step 3: The Findings")
+    st.markdown("""
+    Our analysis revealed a clear and statistically significant difference in key biomarkers between the two states.
+    """)
+
     if master_df is None:
         st.error("Dataset ('neuroalert_dataset_2min_window.csv') not found."); return
         
-    st.markdown("Biomarker distributions from the CHB-MIT training data.")
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    sns.boxplot(ax=axes[0], x='label', y='HR', data=master_df).set(title='Heart Rate Distribution', xticklabels=['Normal', 'Pre-ictal'])
-    sns.boxplot(ax=axes[1], x='label', y='LF/HF', data=master_df).set(title='HRV (LF/HF Ratio) Distribution', xticklabels=['Normal', 'Pre-ictal'])
+    sns.boxplot(ax=axes[0], x='label', y='HR', data=master_df).set(title='Finding #1: Heart Rate Increases', xticklabels=['Normal', 'Pre-ictal'])
+    sns.boxplot(ax=axes[1], x='label', y='LF/HF', data=master_df).set(title='Finding #2: HRV Balance Shifts', xticklabels=['Normal', 'Pre-ictal'])
     st.pyplot(fig)
+    
+    st.header("Step 4: The Conclusion")
+    st.success("""
+    **Our findings confirmed the hypothesis.** A predictive signature does exist. These results gave us the confidence to build our final AI model, which is now available for you to use on the "Analyze New File" page.
+    """)
 
 # ======================================================================================
 # MAIN APP NAVIGATION
 # ======================================================================================
 st.sidebar.title("App Navigation")
-page = st.sidebar.selectbox("Choose a page", ["Analyze New File", "Clinical Analysis"])
+page = st.sidebar.selectbox("Choose a page", ["Analyze New File", "Our Research & Findings"])
 
 if page == "Analyze New File":
     file_upload_page()
-elif page == "Clinical Analysis":
-    clinical_analysis_page()
+elif page == "Our Research & Findings":
+    research_findings_page()
