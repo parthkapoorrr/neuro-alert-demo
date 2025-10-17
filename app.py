@@ -196,6 +196,7 @@ def analysis_page():
                     st.stop()
 
                 # --- Prediction ---
+                # --- Prediction (Code from before) ---
                 st.subheader("Analysis Complete: Results")
                 feature_df = pd.DataFrame(all_features_list)
                 feature_columns = [
@@ -210,24 +211,7 @@ def analysis_page():
                 results_df['Prediction'] = predictions
                 results_df['Confidence'] = probabilities
                 
-                for _, row in results_df.iterrows():
-                    timestamp = time.strftime('%H:%M:%S', time.gmtime(row['timestamp_sec']))
-                    confidence_pct = row['Confidence'] * 100
-                    if row['Prediction'] == 1:
-                        st.metric(
-                            label=f"Segment at: {timestamp}", value="🔴 PRE-ICTAL (WARNING)",
-                            delta=f"{confidence_pct:.1f}% Confidence", delta_color="inverse"
-                        )
-                    else:
-                        st.metric(
-                            label=f"Segment at: {timestamp}", value="🟢 BASELINE (NORMAL)",
-                            delta=f"{100-confidence_pct:.1f}% Confidence", delta_color="normal"
-                        )
-                
-                with st.expander("Show Raw Feature Data"):
-                    st.dataframe(results_df)
-
-                # --- NEW: MAJORITY VOTE VERDICT LOGIC (Inside the 'try' block) ---
+                # --- 1. FINAL VERDICT (MOVED UP) ---
                 st.subheader("Final Summary Verdict", divider="rainbow")
                 
                 # Count the occurrences of each prediction (0 for Normal, 1 for Pre-ictal)
@@ -255,7 +239,31 @@ def analysis_page():
                         f"**Verdict: 🟢 MAJORITY NORMAL**\n\n"
                         f"The majority of analyzed segments ({normal_count}/{total_segments}) appear to be in a normal baseline state."
                     )
-                # --- END OF NEW CODE ---
+
+                # --- 2. SEGMENT-BY-SEGMENT ANALYSIS (MOVED DOWN) ---
+                st.subheader("Segment-by-Segment Log", divider="gray")
+
+                for _, row in results_df.iterrows():
+                    timestamp = time.strftime('%H:%M:%S', time.gmtime(row['timestamp_sec']))
+                    confidence_pct = row['Confidence'] * 100
+                    if row['Prediction'] == 1:
+                        st.metric(
+                            label=f"Segment at: {timestamp}", value="🔴 PRE-ICTAL (WARNING)",
+                            delta=f"{confidence_pct:.1f}% Confidence", delta_color="inverse"
+                        )
+                    else:
+                        st.metric(
+                            label=f"Segment at: {timestamp}", value="🟢 BASELINE (NORMAL)",
+                            delta=f"{100-confidence_pct:.1f}% Confidence", delta_color="normal"
+                        )
+                
+                # --- 3. RAW DATA (STAYS AT THE END) ---
+                with st.expander("Show Raw Feature Data"):
+                    st.dataframe(results_df)
+
+            # This 'except' block should be right after the code above
+            except Exception as e:
+                st.error(f"An error occurred during analysis: {e}")
 
             except Exception as e:
                 st.error(f"An error occurred during analysis: {e}")
