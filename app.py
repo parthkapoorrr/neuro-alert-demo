@@ -218,13 +218,15 @@ def analysis_page():
 
 # --- 3. Main App Navigation ---
 
+# --- 3. Main App Navigation ---
+
 st.sidebar.title("NeuroAlert Navigation")
 page = st.sidebar.radio(
     "Go to:",
-    ("Our Research", "Analyze New File"),
+    ("Analyze New File", "Our Research"),  # <-- REORDERED
     captions=[
-        "The science behind our project.",
-        "Analyze a new patient .edf file."
+        "Analyze a new patient .edf file.", # <-- REORDERED
+        "The science behind our project."
     ]
 )
 
