@@ -35,22 +35,25 @@ def load_model():
 # --- 2. Helper Functions ---
 def find_ecg_channel(channel_list):
     """
-    Finds the correct ECG channel from a list of possible names, 
-    ignoring case and whitespace for robustness.
+    Finds the correct ECG channel, prioritizing 'ECG' over other fallback names.
+    Ignores case and whitespace for robustness.
     """
-    possible_names = ['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2', 'ECG']
-    
-    # Normalize the channel list from the file: strip whitespace and convert to uppercase
-    normalized_channel_list = [ch.strip().upper() for ch in channel_list]
-    
-    for name in possible_names:
-        # Check if the uppercase version of our possible name is in the normalized list
-        if name.upper() in normalized_channel_list:
-            # If it is, find the index and return the ORIGINAL channel name from the file
-            original_index = normalized_channel_list.index(name.upper())
-            return channel_list[original_index]
+    # Create a mapping of normalized names (uppercase, stripped) to original names
+    normalized_channels = {ch.strip().upper(): ch for ch in channel_list}
+
+    # --- 1. PRIORITIZE 'ECG' ---
+    # Explicitly check for the 'ECG' channel first.
+    if 'ECG' in normalized_channels:
+        return normalized_channels['ECG'] # Return the original-cased name
+
+    # --- 2. If 'ECG' is not found, check for other possible fallbacks ---
+    fallback_names = ['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
+    for name in fallback_names:
+        if name.upper() in normalized_channels:
+            # If a fallback is found, return its original-cased name
+            return normalized_channels[name.upper()]
             
-    return None # Return None if no match is found after checking all possibilities
+    return None # Return None if no suitable channel is found
 
 def extract_features_from_signal(segment_ecg, sampling_rate):
     """Extracts our 12 key biomarkers from a raw ECG signal segment."""
@@ -140,7 +143,7 @@ def analysis_page():
                     ecg_channel = find_ecg_channel(raw.info['ch_names'])
 
                     if not ecg_channel:
-                        st.error(f"Could not find a valid ECG channel. Looked for: {['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2', 'ECG']}")
+                        st.error(f"Could not find a valid ECG channel. Looked for: {['ECG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']}")
                         st.stop()
                     
                     st.success(f"Found and using signal from channel: '{ecg_channel}'.")
