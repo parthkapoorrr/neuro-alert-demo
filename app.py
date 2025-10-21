@@ -6,7 +6,6 @@ import pandas as pd
 import joblib
 import time
 import os
-# import requests # No longer needed for direct loading
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -16,13 +15,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- 1. Asset Loading (Reverted to load the FIRST model) ---
+# --- 1. Asset Loading (Using your first model) ---
 @st.cache_resource
 def load_model():
     """
     Loads the original trained XGBoost model directly from the repository.
     """
-    MODEL_FILE_NAME = 'neuroalert_final_model.pkl' # <-- Reverted to your first model
+    MODEL_FILE_NAME = 'neuroalert_final_model.pkl'
     try:
         model = joblib.load(MODEL_FILE_NAME)
         return model
@@ -132,15 +131,16 @@ def analysis_page():
                         st.error(f"Could not find a valid ECG channel. Looked for: {['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2', 'ECG']}")
                         st.stop()
                     
-                    st.success(f"Found ECG channel: '{ecg_channel}'.")
+                    st.success(f"Found and using signal from channel: '{ecg_channel}'.")
                     ecg_signal = raw.get_data(picks=[ecg_channel])[0]
 
-                    st.subheader("Raw ECG Signal (First 10 Seconds)", divider="gray")
+                    # --- DYNAMIC PLOT TITLE ---
+                    st.subheader(f"Raw Signal from Channel: '{ecg_channel}' (First 10 Seconds)", divider="gray")
                     plot_seconds = 10
                     plot_samples = int(plot_seconds * sampling_rate)
                     ecg_plot_df = pd.DataFrame({
                         "Time (s)": np.linspace(0, plot_seconds, plot_samples),
-                        "ECG (μV)": ecg_signal[:plot_samples]
+                        "Signal (μV)": ecg_signal[:plot_samples] # Changed y-axis label to be more generic
                     })
                     st.line_chart(ecg_plot_df.set_index("Time (s)"))
                     
