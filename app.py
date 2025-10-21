@@ -6,7 +6,7 @@ import pandas as pd
 import joblib
 import time
 import os
-import requests
+# import requests # No longer needed for direct loading
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -16,36 +16,19 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- 1. Asset Loading (For V2 Model) ---
+# --- 1. Asset Loading (Reverted to load the FIRST model) ---
 @st.cache_resource
 def load_model():
     """
-    Downloads the V2 model from an external source if it's not already present
-    and then loads it.
+    Loads the original trained XGBoost model directly from the repository.
     """
-    MODEL_FILE_NAME = 'neuroalert_final_model_v2.pkl'
-    # --- IMPORTANT: PASTE YOUR V2 MODEL's DIRECT DOWNLOAD LINK HERE ---
-    MODEL_DOWNLOAD_URL = "PASTE_YOUR_DIRECT_DOWNLOAD_LINK_FOR_THE_V2_MODEL_HERE"
-
-    if not os.path.exists(MODEL_FILE_NAME):
-        if MODEL_DOWNLOAD_URL == "PASTE_YOUR_DIRECT_DOWNLOAD_LINK_FOR_THE_V2_MODEL_HERE":
-             st.error("Model URL is not configured. Please update the `MODEL_DOWNLOAD_URL` in `app.py`.")
-             return None
-        st.info("Model not found locally. Downloading from remote... ☁️")
-        try:
-            with requests.get(MODEL_DOWNLOAD_URL, stream=True) as r:
-                r.raise_for_status()
-                with open(MODEL_FILE_NAME, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
-            st.success("Model downloaded successfully!")
-        except Exception as e:
-            st.error(f"Error downloading model: {e}")
-            return None
-
+    MODEL_FILE_NAME = 'neuroalert_final_model.pkl' # <-- Reverted to your first model
     try:
         model = joblib.load(MODEL_FILE_NAME)
         return model
+    except FileNotFoundError:
+        st.error(f"Model file ('{MODEL_FILE_NAME}') not found. Please ensure it is in the GitHub repository.")
+        return None
     except Exception as e:
         st.error(f"Error loading model: {e}")
         return None
@@ -109,7 +92,6 @@ def research_page():
         """)
     st.success("Our system is designed to identify this signature and provide a **10-minute warning** *before* the seizure begins.")
 
-    # --- NEW: MEET THE TEAM SECTION ---
     st.header("The NeuroAlert Team")
     st.markdown("""
         This project is a collaboration between technology and medicine:
@@ -135,7 +117,6 @@ def analysis_page():
         st.info(f"File '{uploaded_file.name}' uploaded. Click button to analyze.")
         
         if st.button("Analyze Full Recording"):
-            # --- NEW: ADDED LOADING SPINNER ---
             with st.spinner('Analyzing... 💓 This may take a moment for large files.'):
                 temp_file_path = None
                 try:
@@ -154,7 +135,6 @@ def analysis_page():
                     st.success(f"Found ECG channel: '{ecg_channel}'.")
                     ecg_signal = raw.get_data(picks=[ecg_channel])[0]
 
-                    # --- NEW: ECG PLOT ---
                     st.subheader("Raw ECG Signal (First 10 Seconds)", divider="gray")
                     plot_seconds = 10
                     plot_samples = int(plot_seconds * sampling_rate)
@@ -164,7 +144,6 @@ def analysis_page():
                     })
                     st.line_chart(ecg_plot_df.set_index("Time (s)"))
                     
-                    # --- Analysis Loop ---
                     SEGMENT_DURATION_SECS = 120
                     segment_length_samples = SEGMENT_DURATION_SECS * sampling_rate
                     all_features_list = []
@@ -180,7 +159,6 @@ def analysis_page():
                         st.error("No valid data segments could be processed. File may be too noisy or short.")
                         st.stop()
 
-                    # --- Prediction & Results Display ---
                     st.subheader("Analysis Complete: Results", divider="rainbow")
                     feature_df = pd.DataFrame(all_features_list)
                     feature_columns = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI']
@@ -193,7 +171,6 @@ def analysis_page():
                     results_df['Prediction'] = predictions
                     results_df['Confidence'] = probabilities
                     
-                    # 1. FINAL VERDICT
                     st.subheader("Final Summary Verdict", divider="gray")
                     prediction_counts = results_df['Prediction'].value_counts()
                     normal_count = prediction_counts.get(0, 0)
@@ -209,14 +186,12 @@ def analysis_page():
                     else:
                         st.success(f"**Verdict: 🟢 MAJORITY NORMAL**\nThe majority of segments ({normal_count}/{total_segments}) appear normal.")
 
-                    # 2. BIOMARKER TABLE
                     st.subheader("Biomarker Levels per Segment", divider="gray")
                     display_df = feature_df.copy()
                     display_df['Timestamp'] = display_df['timestamp_sec'].apply(lambda x: time.strftime('%H:%M:%S', time.gmtime(x)))
                     display_columns = ['Timestamp'] + feature_columns
                     st.dataframe(display_df[display_columns])
 
-                    # 3. SEGMENT-BY-SEGMENT LOG
                     st.subheader("Segment-by-Segment Log", divider="gray")
                     for _, row in results_df.iterrows():
                         timestamp = time.strftime('%H:%M:%S', time.gmtime(row['timestamp_sec']))
@@ -226,7 +201,6 @@ def analysis_page():
                         else:
                             st.metric(label=f"Segment at: {timestamp}", value="🟢 BASELINE (NORMAL)", delta=f"{100-confidence_pct:.1f}% Confidence", delta_color="normal")
                     
-                    # --- NEW: DOWNLOAD REPORT ---
                     report_content = f"--- NeuroAlert Analysis Report ---\n\n"
                     report_content += f"File Name: {uploaded_file.name}\nAnalysis Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                     report_content += "--- FINAL VERDICT ---\n"
@@ -263,3 +237,4 @@ if page == "Our Research":
     research_page()
 elif page == "Analyze New File":
     analysis_page()
+
