@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 import joblib
 import time
-import os  # <-- Ensure this is at the top
-import requests # <-- For model download
+import os
+import requests
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -16,19 +16,21 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# --- 1. Asset Loading (With Download Fix) ---
-
+# --- 1. Asset Loading (For V2 Model) ---
 @st.cache_resource
 def load_model():
     """
-    Downloads the model from an external source if it's not already present
+    Downloads the V2 model from an external source if it's not already present
     and then loads it.
     """
-    MODEL_FILE_NAME = 'neuroalert_final_model.pkl'
-    # --- PASTE YOUR DIRECT DOWNLOAD LINK HERE ---
-    MODEL_DOWNLOAD_URL = "https://drive.google.com/uc?id=YOUR_FILE_ID_HERE" # <-- IMPORTANT
+    MODEL_FILE_NAME = 'neuroalert_final_model_v2.pkl'
+    # --- IMPORTANT: PASTE YOUR V2 MODEL's DIRECT DOWNLOAD LINK HERE ---
+    MODEL_DOWNLOAD_URL = "PASTE_YOUR_DIRECT_DOWNLOAD_LINK_FOR_THE_V2_MODEL_HERE"
 
     if not os.path.exists(MODEL_FILE_NAME):
+        if MODEL_DOWNLOAD_URL == "PASTE_YOUR_DIRECT_DOWNLOAD_LINK_FOR_THE_V2_MODEL_HERE":
+             st.error("Model URL is not configured. Please update the `MODEL_DOWNLOAD_URL` in `app.py`.")
+             return None
         st.info("Model not found locally. Downloading from remote... ☁️")
         try:
             with requests.get(MODEL_DOWNLOAD_URL, stream=True) as r:
@@ -48,8 +50,7 @@ def load_model():
         st.error(f"Error loading model: {e}")
         return None
 
-# --- 2. Helper Functions (Unchanged) ---
-
+# --- 2. Helper Functions ---
 def find_ecg_channel(channel_list):
     """Finds the correct ECG channel from a list of possible names."""
     possible_names = ['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2', 'ECG']
@@ -59,75 +60,43 @@ def find_ecg_channel(channel_list):
     return None
 
 def extract_features_from_signal(segment_ecg, sampling_rate):
-    """
-    Extracts our 12 key biomarkers from a raw ECG signal segment.
-    Returns a dictionary of features or None if processing fails.
-    """
+    """Extracts our 12 key biomarkers from a raw ECG signal segment."""
     try:
         df_feat, info = nk.ecg_process(segment_ecg, sampling_rate=sampling_rate)
-        
-        # Quality check: Need at least 20 heartbeats to get reliable HRV
         if len(info['ECG_R_Peaks']) < 20:
-            st.write(f"Skipping segment: Not enough R-peaks found ({len(info['ECG_R_Peaks'])}).")
             return None
-            
         hrv_features = nk.hrv(info['ECG_R_Peaks'], sampling_rate=sampling_rate)
-        
-        # Calculate SD1/SD2 ratio safely
         sd1 = hrv_features['HRV_SD1'].iloc[0]
         sd2 = hrv_features['HRV_SD2'].iloc[0]
-        sd1_sd2_ratio = sd1 / sd2 if sd2 != 0 else 0 # <-- Variable defined here
-
+        sd1_sd2_ratio = sd1 / sd2 if sd2 != 0 else 0
         features = {
-            'HR': np.mean(df_feat['ECG_Rate']),
-            'MeanNN': hrv_features['HRV_MeanNN'].iloc[0],
-            'SDNN': hrv_features['HRV_SDNN'].iloc[0],
-            'RMSSD': hrv_features['HRV_RMSSD'].iloc[0],
-            'pNN50': hrv_features['HRV_pNN50'].iloc[0],
-            'SampEn': hrv_features['HRV_SampEn'].iloc[0],
-            'HRV_HTI': hrv_features['HRV_HTI'].iloc[0],
-            'LF/HF': hrv_features['HRV_LFHF'].iloc[0],
-            'SD1': sd1,
-            'SD2': sd2,
-            'SD1/SD2': sd1_sd2_ratio, # <-- FIX: Changed 'sd1_sd2_route' to 'sd1_sd2_ratio'
-            'CSI': hrv_features['HRV_CSI'].iloc[0],
+            'HR': np.mean(df_feat['ECG_Rate']), 'MeanNN': hrv_features['HRV_MeanNN'].iloc[0],
+            'SDNN': hrv_features['HRV_SDNN'].iloc[0], 'RMSSD': hrv_features['HRV_RMSSD'].iloc[0],
+            'pNN50': hrv_features['HRV_pNN50'].iloc[0], 'SampEn': hrv_features['HRV_SampEn'].iloc[0],
+            'HRV_HTI': hrv_features['HRV_HTI'].iloc[0], 'LF/HF': hrv_features['HRV_LFHF'].iloc[0],
+            'SD1': sd1, 'SD2': sd2, 'SD1/SD2': sd1_sd2_ratio, 'CSI': hrv_features['HRV_CSI'].iloc[0],
         }
         return features
-        
-    except Exception as e:
-        # This will now correctly show the NameError from the line above if it fails
-        st.error(f"Error during feature extraction: {e}")
+    except Exception:
         return None
 
 # --- 3. Page Definitions ---
-
 def research_page():
-    """Page 1: Displays the research and medical foundation."""
+    """Displays the research, medical foundation, and team info."""
     st.title("Our Research: The 10-Minute Warning 💓")
     st.markdown("This page details the medical science behind NeuroAlert's predictive technology.")
 
     st.header("The Pre-Ictal Phase: A Window of Opportunity")
-    st.markdown(
-        """
+    st.markdown("""
         An epileptic seizure is not an instant event. For many patients, it is preceded by a distinct physiological state 
-        known as the **pre-ictal phase**. This phase can begin minutes to hours before the observable seizure.
-        
-        During this window, the body's **Autonomic Nervous System (ANS)**, which controls involuntary functions like
-        heart rate and breathing, becomes dysregulated.
-        """
-    )
+        known as the **pre-ictal phase**. This phase can begin minutes to hours before the observable seizure. During this window, the body's **Autonomic Nervous System (ANS)**, which controls involuntary functions like heart rate, becomes dysregulated.
+        """)
 
     st.header("ECG as the Source for ANS Biomarkers")
-    st.markdown(
-        """
-        Instead of trying to detect the seizure in the brain (with EEG), our approach is to detect the *body's reaction* to the pre-ictal phase. We do this by analyzing the **ECG (Electrocardiogram) signal**.
+    st.markdown("""
+        Instead of detecting the seizure in the brain (EEG), our approach is to detect the *body's reaction* to the pre-ictal phase by analyzing the **ECG (Electrocardiogram) signal**. From the ECG, we can measure both **Heart Rate (HR)** and **Heart Rate Variability (HRV)**.
         
-        The ECG signal is incredibly rich. From it, we can measure both the basic **Heart Rate (HR)** and, more 
-        importantly, **Heart Rate Variability (HRV)**.
-        
-        HRV is not just the heart rate, but the tiny, millisecond-level variations *between* heartbeats. A healthy
-        heart is not a perfect metronome; it has high variability. During the pre-ictal phase, this variability
-        changes in predictable ways.
+        HRV is not just the heart rate, but the tiny variations *between* heartbeats. During the pre-ictal phase, this variability changes in predictable ways.
         
         **Our model was trained on 12 key biomarkers, all derived from the ECG signal:**
         - **Basic:** Heart Rate (HR)
@@ -136,15 +105,23 @@ def research_page():
         - **HRV Non-Linear (Poincaré):** SD1, SD2, SD1/SD2 ratio, CSI, HRV_HTI
         - **HRV Entropy:** SampEn
         
-        By feeding these 12 biomarkers from 2-minute windows of ECG data into an XGBoost machine learning model,
-        NeuroAlert learns the complex "signature" of the pre-ictal phase.
-        """
-    )
-    
+        By feeding these biomarkers from 2-minute windows of ECG data into an XGBoost machine learning model, NeuroAlert learns the complex "signature" of the pre-ictal phase.
+        """)
     st.success("Our system is designed to identify this signature and provide a **10-minute warning** *before* the seizure begins.")
 
+    # --- NEW: MEET THE TEAM SECTION ---
+    st.header("The NeuroAlert Team")
+    st.markdown("""
+        This project is a collaboration between technology and medicine:
+        - **Tech Lead:** [Your Name]
+        - **Medical Lead:** [Your Partner's Name], MBBS Student
+        
+        Our unique combination of expertise allows us to build a tool that is not only
+        technically advanced but also medically sound.
+        """)
+
 def analysis_page():
-    """Page 2: The analysis tool for new files."""
+    """The analysis tool for new files."""
     st.title("Analyze New Patient File 🔬")
     st.markdown("Upload a new `.edf` file containing an ECG channel to begin analysis.")
 
@@ -158,152 +135,128 @@ def analysis_page():
         st.info(f"File '{uploaded_file.name}' uploaded. Click button to analyze.")
         
         if st.button("Analyze Full Recording"):
-            
-            # --- THIS IS THE CORRECTED FILE-READING LOGIC (FROM YOUR OLD CODE) ---
-            # This code should be inside the 'if st.button("Analyze Full Recording"):' block
+            # --- NEW: ADDED LOADING SPINNER ---
+            with st.spinner('Analyzing... 💓 This may take a moment for large files.'):
+                temp_file_path = None
+                try:
+                    with open(uploaded_file.name, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    temp_file_path = uploaded_file.name
+                    
+                    raw = mne.io.read_raw_edf(temp_file_path, preload=True, verbose='error')
+                    sampling_rate = int(raw.info['sfreq'])
+                    ecg_channel = find_ecg_channel(raw.info['ch_names'])
 
-            temp_file_path = None # Initialize variable
-            try:
-                # 1. Save the uploaded file to a temporary location on disk
-                with open(uploaded_file.name, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                temp_file_path = uploaded_file.name
-                
-                # 2. Now, pass the FILENAME (a string path) to mne.
-                raw = mne.io.read_raw_edf(temp_file_path, preload=True, verbose='error')
+                    if not ecg_channel:
+                        st.error(f"Could not find a valid ECG channel. Looked for: {['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2', 'ECG']}")
+                        st.stop()
+                    
+                    st.success(f"Found ECG channel: '{ecg_channel}'.")
+                    ecg_signal = raw.get_data(picks=[ecg_channel])[0]
 
-                sampling_rate = int(raw.info['sfreq'])
-                ecg_channel = find_ecg_channel(raw.info['ch_names'])
+                    # --- NEW: ECG PLOT ---
+                    st.subheader("Raw ECG Signal (First 10 Seconds)", divider="gray")
+                    plot_seconds = 10
+                    plot_samples = int(plot_seconds * sampling_rate)
+                    ecg_plot_df = pd.DataFrame({
+                        "Time (s)": np.linspace(0, plot_seconds, plot_samples),
+                        "ECG (μV)": ecg_signal[:plot_samples]
+                    })
+                    st.line_chart(ecg_plot_df.set_index("Time (s)"))
+                    
+                    # --- Analysis Loop ---
+                    SEGMENT_DURATION_SECS = 120
+                    segment_length_samples = SEGMENT_DURATION_SECS * sampling_rate
+                    all_features_list = []
+                    for i in range(0, len(ecg_signal) - segment_length_samples, segment_length_samples):
+                        segment_start_time_sec = i / sampling_rate
+                        segment_ecg = ecg_signal[i:i + segment_length_samples]
+                        features = extract_features_from_signal(segment_ecg, sampling_rate)
+                        if features:
+                            features['timestamp_sec'] = segment_start_time_sec
+                            all_features_list.append(features)
+                    
+                    if not all_features_list:
+                        st.error("No valid data segments could be processed. File may be too noisy or short.")
+                        st.stop()
 
-                if not ecg_channel:
-                    st.error(f"Could not find a valid ECG channel in this file. Looked for: {['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2', 'ECG']}")
-                    st.stop()
-                
-                st.success(f"Found ECG channel: '{ecg_channel}'. Analyzing...")
-                ecg_signal = raw.get_data(picks=[ecg_channel])[0]
-                
-                # --- Analysis Loop ---
-                SEGMENT_DURATION_SECS = 120
-                segment_length_samples = SEGMENT_DURATION_SECS * sampling_rate
-                
-                all_features_list = []
-                for i in range(0, len(ecg_signal) - segment_length_samples, segment_length_samples):
-                    segment_start_time_sec = i / sampling_rate
-                    segment_ecg = ecg_signal[i:i + segment_length_samples]
-                    features = extract_features_from_signal(segment_ecg, sampling_rate)
-                    if features:
-                        features['timestamp_sec'] = segment_start_time_sec
-                        all_features_list.append(features)
-                
-                if not all_features_list:
-                    st.error("No valid data segments could be processed. File may be too noisy or short.")
-                    st.stop()
+                    # --- Prediction & Results Display ---
+                    st.subheader("Analysis Complete: Results", divider="rainbow")
+                    feature_df = pd.DataFrame(all_features_list)
+                    feature_columns = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI']
+                    X_predict = feature_df[feature_columns]
+                    
+                    predictions = model.predict(X_predict)
+                    probabilities = model.predict_proba(X_predict)[:, 1]
+                    
+                    results_df = feature_df[['timestamp_sec']].copy()
+                    results_df['Prediction'] = predictions
+                    results_df['Confidence'] = probabilities
+                    
+                    # 1. FINAL VERDICT
+                    st.subheader("Final Summary Verdict", divider="gray")
+                    prediction_counts = results_df['Prediction'].value_counts()
+                    normal_count = prediction_counts.get(0, 0)
+                    pre_ictal_count = prediction_counts.get(1, 0)
+                    total_segments = len(results_df)
 
-                # --- Prediction (Code from before) ---
-                # --- Prediction ---
-                st.subheader("Analysis Complete: Results")
-                feature_df = pd.DataFrame(all_features_list)
-                feature_columns = [
-                    'HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn',
-                    'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI'
-                ]
-                
-                # We need a dataframe with just these columns for prediction
-                X_predict = feature_df[feature_columns]
-                
-                predictions = model.predict(X_predict)
-                probabilities = model.predict_proba(X_predict)[:, 1]
-                
-                # Create the results_df for metrics and the final expander
-                results_df = feature_df[['timestamp_sec']].copy()
-                results_df['Prediction'] = predictions
-                results_df['Confidence'] = probabilities
-                
-                # --- 1. FINAL VERDICT ---
-                st.subheader("Final Summary Verdict", divider="rainbow")
-                
-                prediction_counts = results_df['Prediction'].value_counts()
-                normal_count = prediction_counts.get(0, 0)
-                pre_ictal_count = prediction_counts.get(1, 0)
-                total_segments = len(results_df)
+                    st.write(f"**Analysis Breakdown:**")
+                    st.metric("Normal Segments", f"{normal_count}/{total_segments}")
+                    st.metric("Pre-ictal Segments", f"{pre_ictal_count}/{total_segments}")
 
-                st.write(f"**Analysis Breakdown:**")
-                st.write(f"- **Normal Segments:** {normal_count} out of {total_segments}")
-                st.write(f"- **Pre-ictal Segments:** {pre_ictal_count} out of {total_segments}")
-
-                if pre_ictal_count > normal_count:
-                    st.error(
-                        f"**Verdict: 🔴 PRE-ICTAL RISK DETECTED**\n\n"
-                        f"The majority of analyzed segments ({pre_ictal_count}/{total_segments}) were "
-                        f"flagged as pre-ictal. Please review."
-                    )
-                else:
-                    st.success(
-                        f"**Verdict: 🟢 MAJORITY NORMAL**\n\n"
-                        f"The majority of analyzed segments ({normal_count}/{total_segments}) appear to be in a normal baseline state."
-                    )
-
-                # --- 2. NEW: BIOMARKER TABLE ---
-                st.subheader("Biomarker Levels per Segment", divider="gray")
-                
-                # Create a clean dataframe for display
-                # We use the original 'feature_df' which has all the biomarker data
-                display_df = feature_df.copy()
-                
-                # Format the timestamp column to be human-readable
-                display_df['Timestamp'] = display_df['timestamp_sec'].apply(
-                    lambda x: time.strftime('%H:%M:%S', time.gmtime(x))
-                )
-                
-                # Reorder columns so Timestamp is first, then the 12 biomarkers
-                display_columns = ['Timestamp'] + feature_columns 
-                
-                # Display the biomarker data in a table
-                st.dataframe(display_df[display_columns])
-
-
-                # --- 3. SEGMENT-BY-SEGMENT LOG ---
-                st.subheader("Segment-by-Segment Log", divider="gray")
-
-                # This loop uses 'results_df' to show the individual verdicts
-                for _, row in results_df.iterrows():
-                    timestamp = time.strftime('%H:%M:%S', time.gmtime(row['timestamp_sec']))
-                    confidence_pct = row['Confidence'] * 100
-                    if row['Prediction'] == 1:
-                        st.metric(
-                            label=f"Segment at: {timestamp}", value="🔴 PRE-ICTAL (WARNING)",
-                            delta=f"{confidence_pct:.1f}% Confidence", delta_color="inverse"
-                        )
+                    if pre_ictal_count > normal_count:
+                        st.error(f"**Verdict: 🔴 PRE-ICTAL RISK DETECTED**\nThe majority of segments ({pre_ictal_count}/{total_segments}) were flagged as pre-ictal.")
                     else:
-                        st.metric(
-                            label=f"Segment at: {timestamp}", value="🟢 BASELINE (NORMAL)",
-                            delta=f"{100-confidence_pct:.1f}% Confidence", delta_color="normal"
-                        )
+                        st.success(f"**Verdict: 🟢 MAJORITY NORMAL**\nThe majority of segments ({normal_count}/{total_segments}) appear normal.")
+
+                    # 2. BIOMARKER TABLE
+                    st.subheader("Biomarker Levels per Segment", divider="gray")
+                    display_df = feature_df.copy()
+                    display_df['Timestamp'] = display_df['timestamp_sec'].apply(lambda x: time.strftime('%H:%M:%S', time.gmtime(x)))
+                    display_columns = ['Timestamp'] + feature_columns
+                    st.dataframe(display_df[display_columns])
+
+                    # 3. SEGMENT-BY-SEGMENT LOG
+                    st.subheader("Segment-by-Segment Log", divider="gray")
+                    for _, row in results_df.iterrows():
+                        timestamp = time.strftime('%H:%M:%S', time.gmtime(row['timestamp_sec']))
+                        confidence_pct = row['Confidence'] * 100
+                        if row['Prediction'] == 1:
+                            st.metric(label=f"Segment at: {timestamp}", value="🔴 PRE-ICTAL (WARNING)", delta=f"{confidence_pct:.1f}% Confidence", delta_color="inverse")
+                        else:
+                            st.metric(label=f"Segment at: {timestamp}", value="🟢 BASELINE (NORMAL)", delta=f"{100-confidence_pct:.1f}% Confidence", delta_color="normal")
+                    
+                    # --- NEW: DOWNLOAD REPORT ---
+                    report_content = f"--- NeuroAlert Analysis Report ---\n\n"
+                    report_content += f"File Name: {uploaded_file.name}\nAnalysis Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    report_content += "--- FINAL VERDICT ---\n"
+                    if pre_ictal_count > normal_count:
+                        report_content += f"Verdict: PRE-ICTAL RISK DETECTED\nDetails: {pre_ictal_count}/{total_segments} segments flagged as pre-ictal.\n\n"
+                    else:
+                        report_content += f"Verdict: MAJORITY NORMAL\nDetails: {normal_count}/{total_segments} segments appear normal.\n\n"
+                    report_content += "--- BIOMARKER DATA ---\n"
+                    report_content += display_df[display_columns].to_string(index=False)
+                    
+                    st.download_button(
+                        label="⬇️ Download Full Report (.txt)",
+                        data=report_content,
+                        file_name=f"NeuroAlert_Report_{uploaded_file.name}.txt",
+                        mime="text/plain"
+                    )
+
+                except Exception as e:
+                    st.error(f"An error occurred during analysis: {e}")
                 
-                # --- 4. RAW PREDICTION DATA (Expander) ---
-                # I've renamed this expander to be clearer
-                with st.expander("Show Raw Prediction Data (Timestamp, Prediction, Confidence)"):
-                    st.dataframe(results_df)
+                finally:
+                    if temp_file_path and os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
 
-            except Exception as e:
-                st.error(f"An error occurred during analysis: {e}")
-            
-            finally:
-                # --- Cleanup ---
-                # This ensures the temporary file is deleted even if an error occurs
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
-
-# --- 4. Main App Navigation (Set to your preference) ---
-
+# --- 4. Main App Navigation ---
 st.sidebar.title("NeuroAlert Navigation")
 page = st.sidebar.radio(
     "Go to:",
-    ("Analyze New File", "Our Research"),  # <-- "Analyze" is the default page
-    captions=[
-        "Analyze a new patient .edf file.",
-        "The science behind our project."
-    ]
+    ("Analyze New File", "Our Research"),
+    captions=["Analyze a new patient .edf file.", "The science behind our project."]
 )
 
 if page == "Our Research":
