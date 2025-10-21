@@ -34,12 +34,23 @@ def load_model():
 
 # --- 2. Helper Functions ---
 def find_ecg_channel(channel_list):
-    """Finds the correct ECG channel from a list of possible names."""
+    """
+    Finds the correct ECG channel from a list of possible names, 
+    ignoring case and whitespace for robustness.
+    """
     possible_names = ['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2', 'ECG']
+    
+    # Normalize the channel list from the file: strip whitespace and convert to uppercase
+    normalized_channel_list = [ch.strip().upper() for ch in channel_list]
+    
     for name in possible_names:
-        if name in channel_list:
-            return name
-    return None
+        # Check if the uppercase version of our possible name is in the normalized list
+        if name.upper() in normalized_channel_list:
+            # If it is, find the index and return the ORIGINAL channel name from the file
+            original_index = normalized_channel_list.index(name.upper())
+            return channel_list[original_index]
+            
+    return None # Return None if no match is found after checking all possibilities
 
 def extract_features_from_signal(segment_ecg, sampling_rate):
     """Extracts our 12 key biomarkers from a raw ECG signal segment."""
@@ -238,5 +249,4 @@ if page == "Our Research":
     research_page()
 elif page == "Analyze New File":
     analysis_page()
-
 
