@@ -32,28 +32,16 @@ def load_model():
         st.error(f"Error loading model: {e}")
         return None
 
-# --- 2. Helper Functions ---
+# --- 2. Helper Functions (Reverted to simpler, stable version) ---
 def find_ecg_channel(channel_list):
     """
-    Finds the correct ECG channel, prioritizing 'ECG' over other fallback names.
-    Ignores case and whitespace for robustness.
+    Finds the correct ECG channel from a list of possible names.
     """
-    # Create a mapping of normalized names (uppercase, stripped) to original names
-    normalized_channels = {ch.strip().upper(): ch for ch in channel_list}
-
-    # --- 1. PRIORITIZE 'ECG' ---
-    # Explicitly check for the 'ECG' channel first.
-    if 'ECG' in normalized_channels:
-        return normalized_channels['ECG'] # Return the original-cased name
-
-    # --- 2. If 'ECG' is not found, check for other possible fallbacks ---
-    fallback_names = ['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
-    for name in fallback_names:
-        if name.upper() in normalized_channels:
-            # If a fallback is found, return its original-cased name
-            return normalized_channels[name.upper()]
-            
-    return None # Return None if no suitable channel is found
+    possible_names = ['ECG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
+    for name in possible_names:
+        if name in channel_list:
+            return name
+    return None
 
 def extract_features_from_signal(segment_ecg, sampling_rate):
     """Extracts our 12 key biomarkers from a raw ECG signal segment."""
@@ -149,13 +137,13 @@ def analysis_page():
                     st.success(f"Found and using signal from channel: '{ecg_channel}'.")
                     ecg_signal = raw.get_data(picks=[ecg_channel])[0]
 
-                    # --- DYNAMIC PLOT TITLE ---
-                    st.subheader(f"Raw Signal from Channel: '{ecg_channel}' (First 10 Seconds)", divider="gray")
+                    # --- PLOT TITLE REVERTED TO STATIC VERSION ---
+                    st.subheader("Raw ECG Signal (First 10 Seconds)", divider="gray")
                     plot_seconds = 10
                     plot_samples = int(plot_seconds * sampling_rate)
                     ecg_plot_df = pd.DataFrame({
                         "Time (s)": np.linspace(0, plot_seconds, plot_samples),
-                        "Signal (μV)": ecg_signal[:plot_samples] # Changed y-axis label to be more generic
+                        "Signal (μV)": ecg_signal[:plot_samples]
                     })
                     st.line_chart(ecg_plot_df.set_index("Time (s)"))
                     
