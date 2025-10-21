@@ -95,7 +95,7 @@ def research_page():
     st.markdown("""
         This project is a collaboration between technology and medicine:
         - **Tech Lead:** Parth Kapoor
-        - **Medical Lead:** Rijjul Garg, MBBS Student
+        - **Medical Lead:** Rijjul Garg
         
         Our unique combination of expertise allows us to build a tool that is not only
         technically advanced but also medically sound.
