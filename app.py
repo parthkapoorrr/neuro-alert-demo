@@ -94,8 +94,8 @@ def research_page():
     st.header("The NeuroAlert Team")
     st.markdown("""
         This project is a collaboration between technology and medicine:
-        - **Tech Lead:** [Your Name]
-        - **Medical Lead:** [Your Partner's Name], MBBS Student
+        - **Tech Lead:** Parth Kapoor
+        - **Medical Lead:** Rijjul Garg, MBBS Student
         
         Our unique combination of expertise allows us to build a tool that is not only
         technically advanced but also medically sound.
@@ -237,4 +237,5 @@ if page == "Our Research":
     research_page()
 elif page == "Analyze New File":
     analysis_page()
+
 
