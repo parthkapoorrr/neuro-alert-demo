@@ -94,8 +94,9 @@ def research_page():
     st.header("The NeuroAlert Team")
     st.markdown("""
         This project is a collaboration between technology and medicine:
-        - **Tech Lead:** Parth Kapoor
         - **Medical Lead:** Rijjul Garg
+        - **Tech Lead:** Parth Kapoor
+        
         
         Our unique combination of expertise allows us to build a tool that is not only
         technically advanced but also medically sound.
