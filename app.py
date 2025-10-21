@@ -178,7 +178,6 @@ def analysis_page():
                     feature_df = pd.DataFrame(all_features_list)
                     feature_columns = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI']
                     
-                    # --- THIS IS THE FIX ---
                     X_predict = feature_df[feature_columns]
                     
                     predictions = model.predict(X_predict)
