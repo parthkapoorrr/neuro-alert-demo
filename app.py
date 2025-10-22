@@ -20,14 +20,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Suppress warnings for a cleaner output
+# Suppress all warnings for a cleaner demo
 warnings.filterwarnings('ignore')
 
 # --- Global Settings & Model Files ---
 MODEL_FILE = 'neuroalert_final_model_v7.pkl'
 SCALER_FILE = 'neuroalert_scaler_v6.pkl'
 PREDICTION_THRESHOLD = 0.5205 # Our "sensitivity dial"
-WINDOW_SIZE = 5 # 5 segments = 10 minutes
+WINDOW_SIZE = 5 # 5 segments = 10 minutes (since each segment is 2 mins)
 SEGMENT_DURATION_SECS = 120 # 2-minute windows
 
 BASE_FEATURES = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 
@@ -118,7 +118,9 @@ if uploaded_file is not None:
                     tmp_file_path = tmp_file.name
 
                 with st.spinner("Step 1/4: Loading and Reading EDF file..."):
-                    raw = mne.io.read_raw_edf(tmp_file_path, preload=False, verbose='error') # preload=False is SAFER
+                    # --- MEMORY FIX 1: preload=False ---
+                    # This opens the file without loading it all into RAM
+                    raw = mne.io.read_raw_edf(tmp_file_path, preload=False, verbose='error')
                     sampling_rate = int(raw.info['sfreq'])
                     ecg_channel = find_ecg_channel(raw.info['ch_names'])
                     
@@ -126,19 +128,20 @@ if uploaded_file is not None:
                         st.error("Could not find a standard ECG channel (ECG, EKG, T8-P8) in this file."); st.stop()
 
                     st.success(f"File loaded. Analyzing ECG channel: '{ecg_channel}' @ {sampling_rate} Hz.")
-                    # Load ONLY the one channel we need. This is memory-efficient.
-                    ecg_signal = raw.get_data(picks=[ecg_channel])[0]
                     segment_length_samples = SEGMENT_DURATION_SECS * sampling_rate
 
-                with st.spinner(f"Step 2/4: Analyzing {len(range(0, len(ecg_signal) - segment_length_samples, segment_length_samples))} 2-min segments..."):
+                with st.spinner(f"Step 2/4: Processing signal into {len(range(0, raw.n_times - segment_length_samples, segment_length_samples))} 2-min segments..."):
                     base_features_list = []
                     
                     # --- LOOP 1: V1-style Robust Feature Extraction ---
-                    for i in range(0, len(ecg_signal) - segment_length_samples, segment_length_samples):
-                        segment_ecg = ecg_signal[i : i + segment_length_samples]
+                    for i in range(0, raw.n_times - segment_length_samples, segment_length_samples):
+                        
+                        # --- MEMORY FIX 2: get_data() inside the loop ---
+                        # Only load ONE 2-minute segment into RAM at a time
+                        segment_ecg = raw.get_data(picks=[ecg_channel], start=i, stop=i + segment_length_samples)[0]
                         
                         try:
-                            # Use the robust, all-in-one 'ecg_process' on the 2-min chunk
+                            # Use the robust, all-in-one 'ecg_process' on the small chunk
                             df_feat, info = nk.ecg_process(segment_ecg, sampling_rate=sampling_rate)
                             rpeaks = info['ECG_R_Peaks']
                             
@@ -167,7 +170,7 @@ if uploaded_file is not None:
                             
                         except Exception as e:
                             # This segment was noisy, just skip it and continue
-                            pass
+                            pass # This is the V1-style error handling
 
                 if not base_features_list:
                     st.error("Could not extract any valid HRV data. The signal is likely too noisy or the selected channel is not ECG.")
