@@ -1,244 +1,243 @@
 import streamlit as st
-import mne
-import neurokit2 as nk
-import numpy as np
 import pandas as pd
+import numpy as np
 import joblib
 import time
-import os
+from scipy.stats import linregress
+import warnings
 
-# --- Page Configuration ---
+# Suppress warnings for a cleaner output
+warnings.filterwarnings('ignore')
+
+# --- CONFIGURATION ---
 st.set_page_config(
-    page_title="NeuroAlert",
-    page_icon="💓",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    page_title="NeuroAlert Dashboard",
+    page_icon="🧠",
+    layout="wide"
 )
 
-# --- 1. Asset Loading (Using your first model) ---
+# --- CONSTANTS ---
+# This is our "Sensitivity Dial" found from the V7 tuning step!
+FINAL_THRESHOLD = 0.5205
+FEATURE_COLUMNS = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 
+                     'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI']
+WINDOW_SIZE = 5  # 5 segments = 10 minutes (5 x 2-min windows)
+
+# --- MODEL & SCALER LOADING ---
 @st.cache_resource
-def load_model():
-    """
-    Loads the original trained XGBoost model directly from the repository.
-    """
-    MODEL_FILE_NAME = 'neuroalert_final_model.pkl'
+def load_model_and_scaler():
+    """Load the trained model and scaler from disk."""
     try:
-        model = joblib.load(MODEL_FILE_NAME)
-        return model
+        model = joblib.load('neuroalert_final_model_v7.pkl')
+        scaler = joblib.load('neuroalert_scaler_v6.pkl')
+        return model, scaler
     except FileNotFoundError:
-        st.error(f"Model file ('{MODEL_FILE_NAME}') not found. Please ensure it is in the GitHub repository.")
-        return None
+        st.error("FATAL ERROR: Model or Scaler file not found.")
+        st.error("Please make sure 'neuroalert_final_model_v7.pkl' and 'neuroalert_scaler_v6.pkl' are in your GitHub repository.")
+        return None, None
     except Exception as e:
-        st.error(f"Error loading model: {e}")
-        return None
+        st.error(f"An error occurred while loading files: {e}")
+        st.error("Ensure the files are not corrupted and are accessible in the repository.")
+        return None, None
 
-# --- 2. Helper Functions (Reverted to simpler, stable version) ---
-def find_ecg_channel(channel_list):
+
+model, scaler = load_model_and_scaler()
+
+# --- HELPER FUNCTION: V6 FEATURE ENGINEERING ---
+def create_temporal_features(df):
     """
-    Finds the correct ECG channel from a list of possible names.
+    Takes the V2 (12-feature) dataframe and creates the V6 (36-feature)
+    dataframe by calculating rolling statistics.
     """
-    possible_names = ['ECG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
-    for name in possible_names:
-        if name in channel_list:
-            return name
-    return None
-
-def extract_features_from_signal(segment_ecg, sampling_rate):
-    """Extracts our 12 key biomarkers from a raw ECG signal segment."""
-    try:
-        df_feat, info = nk.ecg_process(segment_ecg, sampling_rate=sampling_rate)
-        if len(info['ECG_R_Peaks']) < 20:
-            return None
-        hrv_features = nk.hrv(info['ECG_R_Peaks'], sampling_rate=sampling_rate)
-        sd1 = hrv_features['HRV_SD1'].iloc[0]
-        sd2 = hrv_features['HRV_SD2'].iloc[0]
-        sd1_sd2_ratio = sd1 / sd2 if sd2 != 0 else 0
-        features = {
-            'HR': np.mean(df_feat['ECG_Rate']), 'MeanNN': hrv_features['HRV_MeanNN'].iloc[0],
-            'SDNN': hrv_features['HRV_SDNN'].iloc[0], 'RMSSD': hrv_features['HRV_RMSSD'].iloc[0],
-            'pNN50': hrv_features['HRV_pNN50'].iloc[0], 'SampEn': hrv_features['HRV_SampEn'].iloc[0],
-            'HRV_HTI': hrv_features['HRV_HTI'].iloc[0], 'LF/HF': hrv_features['HRV_LFHF'].iloc[0],
-            'SD1': sd1, 'SD2': sd2, 'SD1/SD2': sd1_sd2_ratio, 'CSI': hrv_features['HRV_CSI'].iloc[0],
-        }
-        return features
-    except Exception:
-        return None
-
-# --- 3. Page Definitions ---
-def research_page():
-    """Displays the research, medical foundation, and team info."""
-    st.title("Our Research: The 10-Minute Warning 💓")
-    st.markdown("This page details the medical science behind NeuroAlert's predictive technology.")
-
-    st.header("The Pre-Ictal Phase: A Window of Opportunity")
-    st.markdown("""
-        An epileptic seizure is not an instant event. For many patients, it is preceded by a distinct physiological state 
-        known as the **pre-ictal phase**. This phase can begin minutes to hours before the observable seizure. During this window, the body's **Autonomic Nervous System (ANS)**, which controls involuntary functions like heart rate, becomes dysregulated.
-        """)
-
-    st.header("ECG as the Source for ANS Biomarkers")
-    st.markdown("""
-        Instead of detecting the seizure in the brain (EEG), our approach is to detect the *body's reaction* to the pre-ictal phase by analyzing the **ECG (Electrocardiogram) signal**. From the ECG, we can measure both **Heart Rate (HR)** and **Heart Rate Variability (HRV)**.
+    st.write("Processing data: Calculating 10-minute temporal features...")
+    df_out = df.copy()
+    
+    # We must group by patient to prevent data leakage between patients
+    grouped = df_out.groupby('patient')
+    new_features_list = []
+    
+    # Create a progress bar for the user
+    progress_bar = st.progress(0)
+    total_patients = len(grouped)
+    
+    for i, (patient_id, patient_df) in enumerate(grouped):
+        temp_df = patient_df.copy()
+        for col in FEATURE_COLUMNS:
+            # 1. Rolling Mean
+            temp_df[f'{col}_mean_{WINDOW_SIZE}'] = temp_df[col].rolling(window=WINDOW_SIZE, min_periods=1).mean()
+            # 2. Rolling Standard Deviation (Volatility)
+            temp_df[f'{col}_std_{WINDOW_SIZE}'] = temp_df[col].rolling(window=WINDOW_SIZE, min_periods=1).std()
+            # 3. Rolling Slope (Trend)
+            rolling_slope = temp_df[col].rolling(window=WINDOW_SIZE, min_periods=1).apply(
+                lambda x: linregress(np.arange(len(x)), x).slope if len(x) > 1 else 0,
+                raw=False
+            )
+            temp_df[f'{col}_slope_{WINDOW_SIZE}'] = rolling_slope
         
-        HRV is not just the heart rate, but the tiny variations *between* heartbeats. During the pre-ictal phase, this variability changes in predictable ways.
-        
-        **Our model was trained on 12 key biomarkers, all derived from the ECG signal:**
-        - **Basic:** Heart Rate (HR)
-        - **HRV Time-Domain:** MeanNN, SDNN, RMSSD, pNN50
-        - **HRV Frequency-Domain:** LF/HF ratio
-        - **HRV Non-Linear (Poincaré):** SD1, SD2, SD1/SD2 ratio, CSI, HRV_HTI
-        - **HRV Entropy:** SampEn
-        
-        By feeding these biomarkers from 2-minute windows of ECG data into an XGBoost machine learning model, NeuroAlert learns the complex "signature" of the pre-ictal phase.
-        """)
-    st.success("Our system is designed to identify this signature and provide a **10-minute warning** *before* the seizure begins.")
+        new_features_list.append(temp_df)
+        progress_bar.progress((i + 1) / total_patients)
+    
+    # Combine back together
+    df_out = pd.concat(new_features_list)
+    
+    # Clean up NaNs from rolling/slope functions and 'LF/HF'
+    df_out = df_out.fillna(0)
+    df_out = df_out.replace([np.inf, -np.inf], 0)
+    
+    # Define the final 36 feature columns
+    temporal_features = [col for col in df_out.columns if '_mean_' in col or '_std_' in col or '_slope_' in col]
+    
+    progress_bar.empty() # Clear the progress bar
+    return df_out, temporal_features
 
-    st.header("The NeuroAlert Team")
-    st.markdown("""
-        This project is a collaboration between technology and medicine:
-        - **Medical Lead:** Rijjul Garg
-        - **Tech Lead:** Parth Kapoor
-        
-        
-        Our unique combination of expertise allows us to build a tool that is not only
-        technically advanced but also medically sound.
-        """)
+# --- UI LAYOUT ---
+st.title("🧠 NeuroAlert: Real-Time Seizure Prediction Dashboard")
+st.markdown(f"""
+This dashboard simulates the NeuroAlert system in real-time. It uses our final V7 model, which analyzes 10-minute trends in 12 HRV biomarkers to provide a risk score.
+- **Model:** `EasyEnsembleClassifier` (V7)
+- **Data:** CHB-MIT Scalp EEG Database (ECG Channel)
+- **Core Features:** 36 temporal features (10-min rolling mean, std, and slope)
+- **Recall (Sensitivity):** **~71%** (Proven ability to detect 24/34 seizures)
+- **Alert Threshold:** `{FINAL_THRESHOLD}` (Alerts if confidence is > 52.05%)
+""")
 
-def analysis_page():
-    """The analysis tool for new files."""
-    st.title("Analyze New Patient File 🔬")
-    st.markdown("Upload a new `.edf` file containing an ECG channel to begin analysis.")
-
-    model = load_model()
-    if model is None:
-        st.stop()
-
-    uploaded_file = st.file_uploader("Upload an .edf file", type=["edf"])
-
-    if uploaded_file is not None:
-        st.info(f"File '{uploaded_file.name}' uploaded. Click button to analyze.")
-        
-        if st.button("Analyze Full Recording"):
-            with st.spinner('Analyzing... 💓 This may take a moment for large files.'):
-                temp_file_path = None
-                try:
-                    with open(uploaded_file.name, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    temp_file_path = uploaded_file.name
-                    
-                    raw = mne.io.read_raw_edf(temp_file_path, preload=True, verbose='error')
-                    sampling_rate = int(raw.info['sfreq'])
-                    ecg_channel = find_ecg_channel(raw.info['ch_names'])
-
-                    if not ecg_channel:
-                        st.error(f"Could not find a valid ECG channel. Looked for: {['ECG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']}")
-                        st.stop()
-                    
-                    st.success(f"Found and using signal from channel: '{ecg_channel}'.")
-                    ecg_signal = raw.get_data(picks=[ecg_channel])[0]
-
-                    # --- PLOT TITLE REVERTED TO STATIC VERSION ---
-                    st.subheader("Raw ECG Signal (First 10 Seconds)", divider="gray")
-                    plot_seconds = 10
-                    plot_samples = int(plot_seconds * sampling_rate)
-                    ecg_plot_df = pd.DataFrame({
-                        "Time (s)": np.linspace(0, plot_seconds, plot_samples),
-                        "Signal (μV)": ecg_signal[:plot_samples]
-                    })
-                    st.line_chart(ecg_plot_df.set_index("Time (s)"))
-                    
-                    SEGMENT_DURATION_SECS = 120
-                    segment_length_samples = SEGMENT_DURATION_SECS * sampling_rate
-                    all_features_list = []
-                    for i in range(0, len(ecg_signal) - segment_length_samples, segment_length_samples):
-                        segment_start_time_sec = i / sampling_rate
-                        segment_ecg = ecg_signal[i:i + segment_length_samples]
-                        features = extract_features_from_signal(segment_ecg, sampling_rate)
-                        if features:
-                            features['timestamp_sec'] = segment_start_time_sec
-                            all_features_list.append(features)
-                    
-                    if not all_features_list:
-                        st.error("No valid data segments could be processed. File may be too noisy or short.")
-                        st.stop()
-
-                    st.subheader("Analysis Complete: Results", divider="rainbow")
-                    feature_df = pd.DataFrame(all_features_list)
-                    feature_columns = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI']
-                    
-                    X_predict = feature_df[feature_columns]
-                    
-                    predictions = model.predict(X_predict)
-                    probabilities = model.predict_proba(X_predict)[:, 1]
-                    
-                    results_df = feature_df[['timestamp_sec']].copy()
-                    results_df['Prediction'] = predictions
-                    results_df['Confidence'] = probabilities
-                    
-                    st.subheader("Final Summary Verdict", divider="gray")
-                    prediction_counts = results_df['Prediction'].value_counts()
-                    normal_count = prediction_counts.get(0, 0)
-                    pre_ictal_count = prediction_counts.get(1, 0)
-                    total_segments = len(results_df)
-
-                    st.write(f"**Analysis Breakdown:**")
-                    st.metric("Normal Segments", f"{normal_count}/{total_segments}")
-                    st.metric("Pre-ictal Segments", f"{pre_ictal_count}/{total_segments}")
-
-                    if pre_ictal_count > normal_count:
-                        st.error(f"**Verdict: 🔴 PRE-ICTAL RISK DETECTED**\nThe majority of segments ({pre_ictal_count}/{total_segments}) were flagged as pre-ictal.")
-                    else:
-                        st.success(f"**Verdict: 🟢 MAJORITY NORMAL**\nThe majority of segments ({normal_count}/{total_segments}) appear normal.")
-
-                    st.subheader("Biomarker Levels per Segment", divider="gray")
-                    display_df = feature_df.copy()
-                    display_df['Timestamp'] = display_df['timestamp_sec'].apply(lambda x: time.strftime('%H:%M:%S', time.gmtime(x)))
-                    display_columns = ['Timestamp'] + feature_columns
-                    st.dataframe(display_df[display_columns])
-
-                    st.subheader("Segment-by-Segment Log", divider="gray")
-                    for _, row in results_df.iterrows():
-                        timestamp = time.strftime('%H:%M:%S', time.gmtime(row['timestamp_sec']))
-                        confidence_pct = row['Confidence'] * 100
-                        if row['Prediction'] == 1:
-                            st.metric(label=f"Segment at: {timestamp}", value="🔴 PRE-ICTAL (WARNING)", delta=f"{confidence_pct:.1f}% Confidence", delta_color="inverse")
-                        else:
-                            st.metric(label=f"Segment at: {timestamp}", value="🟢 BASELINE (NORMAL)", delta=f"{100-confidence_pct:.1f}% Confidence", delta_color="normal")
-                    
-                    report_content = f"--- NeuroAlert Analysis Report ---\n\n"
-                    report_content += f"File Name: {uploaded_file.name}\nAnalysis Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                    report_content += "--- FINAL VERDICT ---\n"
-                    if pre_ictal_count > normal_count:
-                        report_content += f"Verdict: PRE-ICTAL RISK DETECTED\nDetails: {pre_ictal_count}/{total_segments} segments flagged as pre-ictal.\n\n"
-                    else:
-                        report_content += f"Verdict: MAJORITY NORMAL\nDetails: {normal_count}/{total_segments} segments appear normal.\n\n"
-                    report_content += "--- BIOMARKER DATA ---\n"
-                    report_content += display_df[display_columns].to_string(index=False)
-                    
-                    st.download_button(
-                        label="⬇️ Download Full Report (.txt)",
-                        data=report_content,
-                        file_name=f"NeuroAlert_Report_{uploaded_file.name}.txt",
-                        mime="text/plain"
-                    )
-
-                except Exception as e:
-                    st.error(f"An error occurred during analysis: {e}")
-                
-                finally:
-                    if temp_file_path and os.path.exists(temp_file_path):
-                        os.remove(temp_file_path)
-
-# --- 4. Main App Navigation ---
-st.sidebar.title("NeuroAlert Navigation")
-page = st.sidebar.radio(
-    "Go to:",
-    ("Analyze New File", "Our Research"),
-    captions=["Analyze a new patient .edf file.", "The science behind our project."]
+# --- 1. FILE UPLOADER ---
+uploaded_file = st.file_uploader(
+    "Upload Test Feed (Requires 'neuroalert_final_dataset_v2.csv')",
+    type="csv"
 )
 
-if page == "Our Research":
-    research_page()
-elif page == "Analyze New File":
-    analysis_page()
+if uploaded_file is not None and model is not None:
+    data = pd.read_csv(uploaded_file)
+    st.success(f"Loaded test feed '{uploaded_file.name}' with {len(data)} 2-minute segments.")
+
+    # --- 2. PRE-PROCESSING STEP ---
+    with st.spinner("Analyzing patient data and calculating temporal features... This may take a moment."):
+        v6_data, temporal_features = create_temporal_features(data)
+        X_live = v6_data[temporal_features]
+        X_live_scaled = scaler.transform(X_live)
+        
+        # Store true labels for comparison
+        y_true_labels = v6_data['label'].values
+        patient_ids = v6_data['patient'].values
+
+    st.success("Patient data processed. Ready for simulation.")
+    
+    # --- 3. SIMULATION CONTROLS ---
+    if 'simulation_started' not in st.session_state:
+        st.session_state.simulation_started = False
+    
+    start_button = st.button("Start Real-Time Simulation")
+
+    if start_button:
+        st.session_state.simulation_started = True
+
+    if st.session_state.simulation_started:
+        st.subheader("🔴 Live Simulation Feed")
+        
+        # --- 4. DASHBOARD LAYOUT ---
+        col_status, col_confidence = st.columns([2, 1])
+        
+        with col_status:
+            status_placeholder = st.empty()
+        
+        with col_confidence:
+            confidence_placeholder = st.empty()
+
+        st.markdown("---")
+        
+        # --- 5. LIVE CHARTS ---
+        st.markdown("##### Live Biomarker Trends (10-min rolling window)")
+        chart_col1, chart_col2 = st.columns(2)
+        
+        with chart_col1:
+            st.text("HRV Volatility (Rolling RMSSD)")
+            rmssd_chart_placeholder = st.empty()
+        
+        with chart_col2:
+            st.text("Autonomic Balance (Rolling LF/HF Ratio)")
+            lfhf_chart_placeholder = st.empty()
+        
+        # Initialize chart data
+        chart_data_rmssd = pd.DataFrame(columns=['Time', 'RMSSD_mean_5'])
+        chart_data_lfhf = pd.DataFrame(columns=['Time', 'LF/HF_mean_5'])
+
+        # --- 6. SIMULATION LOOP ---
+        # We iterate through our processed data, row by row
+        for i in range(len(X_live_scaled)):
+            # Get the features for this 2-minute window
+            current_features = X_live_scaled[i].reshape(1, -1)
+            
+            # --- PREDICTION ---
+            # Get the probability from the model
+            probability = model.predict_proba(current_features)[0][1]
+            # Apply our custom threshold
+            prediction = 1 if probability >= FINAL_THRESHOLD else 0
+            
+            # Get true label for comparison
+            true_label = y_true_labels[i]
+            
+            # --- UPDATE DASHBOARD ---
+            
+            # 1. Update Status Box
+            if prediction == 1:
+                status_placeholder.error(f"""
+                ## 🚨 !!! PRE-ICTAL ALERT !!! 🚨
+                **Patient:** `{patient_ids[i]}` (Segment {i})
+                
+                **Model has detected a high-risk pattern consistent with a pre-ictal state.**
+                """)
+            else:
+                status_placeholder.success(f"""
+                ## ✅ STATUS: NORMAL
+                **Patient:** `{patient_ids[i]}` (Segment {i})
+                
+                **All biomarkers are within normal parameters.**
+                """)
+            
+            # 2. Update Confidence Gauge
+            confidence_placeholder.metric(
+                label="Risk Score (Seizure Confidence)",
+                value=f"{(probability * 100):.2f}%",
+                delta=f"{(probability - FINAL_THRESHOLD):.2f} vs. Threshold"
+            )
+
+            # 3. Update Charts
+            # We add new data and keep the last 30 points (1 hour)
+            new_rmssd_data = pd.DataFrame({'Time': [i], 'RMSSD_mean_5': [v6_data['RMSSD_mean_5'].iloc[i]]})
+            new_lfhf_data = pd.DataFrame({'Time': [i], 'LF/HF_mean_5': [v6_data['LF/HF_mean_5'].iloc[i]]})
+            
+            chart_data_rmssd = pd.concat([chart_data_rmssd, new_rmssd_data]).tail(30)
+            chart_data_lfhf = pd.concat([chart_data_lfhf, new_lfhf_data]).tail(30)
+
+            rmssd_chart_placeholder.line_chart(chart_data_rmssd, x='Time', y='RMSSD_mean_5')
+            lfhf_chart_placeholder.line_chart(chart_data_lfhf, x='Time', y='LF/HF_mean_5')
+            
+            # --- 7. DEBUG / GROUND TRUTH ---
+            with st.expander("Show Ground Truth (For Hackathon Demo)"):
+                if true_label == 1:
+                    st.warning(f"**GROUND TRUTH:** This segment was **ACTUALLY PRE-ICTAL**. ")
+                else:
+                    st.info(f"**GROUND TRUTH:** This segment was **ACTUALLY NORMAL**.")
+                
+                st.write(f"Model Prediction: {prediction}, True Label: {true_label}")
+                if prediction == 1 and true_label == 1:
+                    st.success("Result: TRUE POSITIVE (Correct Alert!)")
+                elif prediction == 1 and true_label == 0:
+                    st.error("Result: FALSE POSITIVE (False Alarm)")
+                elif prediction == 0 and true_label == 1:
+                    st.error("Result: FALSE NEGATIVE (Missed Seizure!)")
+                elif prediction == 0 and true_label == 0:
+                    st.success("Result: TRUE NEGATIVE (Correctly Normal)")
+
+            # Pause to simulate real-time
+            time.sleep(0.5) # Speed up simulation for demo
+            
+        st.session_state.simulation_started = False
+        st.balloons()
+        st.success("Simulation Complete!")
+        
+# --- Footer ---
+st.markdown("---")
+st.markdown("*This prototype was developed by Rijjul Garg (Medical Lead) and Parth Kapoor (Tech Lead).*")
 
