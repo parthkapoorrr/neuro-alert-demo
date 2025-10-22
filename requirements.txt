@@ -2,5 +2,9 @@ streamlit
 pandas
 numpy
 scikit-learn
-imbalanced-learn
+joblib
+mne
+neurokit2
 scipy
+altair
+imbalanced-learn
