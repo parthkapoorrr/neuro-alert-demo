@@ -26,8 +26,8 @@ warnings.filterwarnings('ignore')
 # --- Global Settings & Model Files ---
 MODEL_FILE = 'neuroalert_final_model_v7.pkl'
 SCALER_FILE = 'neuroalert_scaler_v6.pkl'
-PREDICTION_THRESHOLD = 0.5205 # The "sensitivity dial" we found
-WINDOW_SIZE = 5 # 5 segments = 10 minutes (since each segment is 2 mins)
+PREDICTION_THRESHOLD = 0.5205 # Our "sensitivity dial"
+WINDOW_SIZE = 5 # 5 segments = 10 minutes
 SEGMENT_DURATION_SECS = 120 # 2-minute windows
 
 BASE_FEATURES = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 
@@ -65,14 +65,10 @@ except AttributeError:
 # --- Core Processing Functions ---
 def find_ecg_channel(ch_names):
     """Find the correct ECG channel name."""
-    # Prioritize 'ECG' or 'EKG'
-    for ch in ch_names:
-        if "ECG" in ch.upper() or "EKG" in ch.upper():
-            return ch
-    # Fallback for this specific dataset
-    for ch in ch_names:
-        if "T8-P8" in ch: 
-            return ch
+    possible_names = ['ECG', 'EKG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
+    for name in possible_names:
+        if name in ch_names: 
+            return name
     return None
 
 def calculate_temporal_features(window_df):
@@ -109,7 +105,6 @@ st.markdown(f"""
 uploaded_file = st.file_uploader("Choose an .edf file", type="edf", help="Max file size: 200MB.")
 
 if uploaded_file is not None:
-    # This is the 200MB limit
     if uploaded_file.size > 200 * 1024 * 1024:
         st.error("File is too large. Please upload an .edf file under 200MB.")
     else:
@@ -123,7 +118,7 @@ if uploaded_file is not None:
                     tmp_file_path = tmp_file.name
 
                 with st.spinner("Step 1/4: Loading and Reading EDF file..."):
-                    raw = mne.io.read_raw_edf(tmp_file_path, preload=True, verbose='error')
+                    raw = mne.io.read_raw_edf(tmp_file_path, preload=False, verbose='error') # preload=False is SAFER
                     sampling_rate = int(raw.info['sfreq'])
                     ecg_channel = find_ecg_channel(raw.info['ch_names'])
                     
@@ -131,10 +126,11 @@ if uploaded_file is not None:
                         st.error("Could not find a standard ECG channel (ECG, EKG, T8-P8) in this file."); st.stop()
 
                     st.success(f"File loaded. Analyzing ECG channel: '{ecg_channel}' @ {sampling_rate} Hz.")
+                    # Load ONLY the one channel we need. This is memory-efficient.
                     ecg_signal = raw.get_data(picks=[ecg_channel])[0]
                     segment_length_samples = SEGMENT_DURATION_SECS * sampling_rate
 
-                with st.spinner(f"Step 2/4: Processing signal into {len(range(0, len(ecg_signal) - segment_length_samples, segment_length_samples))} 2-min segments..."):
+                with st.spinner(f"Step 2/4: Analyzing {len(range(0, len(ecg_signal) - segment_length_samples, segment_length_samples))} 2-min segments..."):
                     base_features_list = []
                     
                     # --- LOOP 1: V1-style Robust Feature Extraction ---
@@ -142,7 +138,7 @@ if uploaded_file is not None:
                         segment_ecg = ecg_signal[i : i + segment_length_samples]
                         
                         try:
-                            # Use the robust, all-in-one 'ecg_process'
+                            # Use the robust, all-in-one 'ecg_process' on the 2-min chunk
                             df_feat, info = nk.ecg_process(segment_ecg, sampling_rate=sampling_rate)
                             rpeaks = info['ECG_R_Peaks']
                             
@@ -171,15 +167,14 @@ if uploaded_file is not None:
                             
                         except Exception as e:
                             # This segment was noisy, just skip it and continue
-                            # print(f"Segment {i} failed: {e}")
-                            continue
+                            pass
 
                 if not base_features_list:
                     st.error("Could not extract any valid HRV data. The signal is likely too noisy or the selected channel is not ECG.")
                     st.stop()
                 
                 hrv_df = pd.DataFrame(base_features_list).fillna(0).replace([np.inf, -np.inf], 0)
-                st.success(f"Step 2 Complete: Extracted 12 HRV features from {len(hrv_df)} segments.")
+                st.success(f"Step 2 Complete: Extracted 12 HRV features from {len(hrv_df)} valid segments.")
                 
                 # --- LOOP 2: V6-style Temporal Feature Generation ---
                 with st.spinner("Step 3/4: Analyzing 10-minute trends..."):
@@ -216,7 +211,7 @@ if uploaded_file is not None:
                 
                 # Create a results dataframe for charting
                 results_df = pd.DataFrame({
-                    'Time (minutes)': (np.arange(len(final_probs)) * 2) + 2, 
+                    'Time (minutes)': (np.arange(len(final_probs)) * 2) + 2, # Time starts at 2 mins
                     'Seizure Probability': final_probs,
                     'Threshold': PREDICTION_THRESHOLD,
                     'Alert': final_predictions
