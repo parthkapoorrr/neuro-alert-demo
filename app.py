@@ -10,8 +10,8 @@ from scipy.stats import linregress
 from scipy import signal
 import re
 import warnings
-import tempfile  
-import os        
+import tempfile  # For temporary file handling
+import os        # For file operations
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -85,16 +85,17 @@ def find_ecg_channel(ch_names):
             return ch
     return None
 
-def get_hrv_features(rpeaks, sfreq):
+def get_hrv_features(rpeaks_indices, sfreq):
     """
-    Extracts the 12 key HRV features from a list of R-peaks.
+    Extracts the 12 key HRV features from a list of R-peak *indices*.
     """
     # Need at least 10 R-peaks to calculate reliable features
-    if len(rpeaks) < 10:
+    if len(rpeaks_indices) < 10:
         return pd.DataFrame(columns=BASE_FEATURES) 
 
     try:
-        hrv_features = nk.hrv(rpeaks, sampling_rate=sfreq, show=False)
+        # We pass the *indices* of the peaks, not their times
+        hrv_features = nk.hrv(rpeaks_indices, sampling_rate=sfreq, show=False)
         # Select only the 12 features our model was trained on
         hrv_features_selected = hrv_features[BASE_FEATURES]
         return hrv_features_selected
@@ -157,6 +158,8 @@ if uploaded_file is not None:
             
             with st.spinner("Analyzing EDF file... This may take 1-3 minutes. Please wait."):
                 
+                # --- START OF NEW (V3.0) ROBUST LOGIC ---
+                
                 # 1. LOAD AND PROCESS EDF
                 raw = mne.io.read_raw_edf(tmp_file_path, preload=True, verbose='error')
                 sfreq = int(raw.info['sfreq'])
@@ -170,33 +173,45 @@ if uploaded_file is not None:
                 st.success(f"Found ECG data in channel: '{ecg_channel}' at {sfreq} Hz.")
                 ecg_signal = raw.get_data(picks=[ecg_channel])[0]
                 
-                # 3. PROCESS ALL SEGMENTS (V2-style processing)
+                # 3. PROCESS *ENTIRE* SIGNAL AT ONCE (This is the robust V1-style)
+                ecg_cleaned = nk.ecg_clean(ecg_signal, sampling_rate=sfreq, method="neurokit")
+                rpeaks_info = nk.ecg_peaks(ecg_cleaned, sampling_rate=sfreq, method="pantompkins1985", correct_artifacts=True)
+                all_rpeaks = rpeaks_info[0]['ECG_R_Peaks']
+                
+                if len(all_rpeaks) < 100: # Need at least some heartbeats
+                    st.error("Signal is too noisy. Could not detect a reliable heartbeat.")
+                    st.stop()
+
+                st.success(f"Signal quality good. Found {len(all_rpeaks)} heartbeats.")
+
+                # --- END OF NEW (V3.0) ROBUST LOGIC ---
+                
+                
+                # 4. NOW, SEGMENT THE CLEAN R-PEAK LIST
                 segment_length_samples = SEGMENT_DURATION_SECS * sfreq
                 all_hrv_features = []
                 
                 total_segments_indices = range(0, raw.n_times - segment_length_samples, segment_length_samples)
                 
                 for i in total_segments_indices:
-                    segment_ecg = ecg_signal[i : i + segment_length_samples]
+                    segment_start_sample = i
+                    segment_end_sample = i + segment_length_samples
                     
-                    # Clean the segment
-                    ecg_cleaned = nk.ecg_clean(segment_ecg, sampling_rate=sfreq, method="neurokit")
+                    # Find all R-peaks that fall within this window
+                    segment_rpeaks_indices = all_rpeaks[(all_rpeaks >= segment_start_sample) & (all_rpeaks < segment_end_sample)]
                     
-                    # Find R-peaks
-                    # --- THIS IS THE FIX ---
-                    # Switched from "neurokit" to "pantompkins1985" for better noise resistance
-                    rpeaks_info = nk.ecg_peaks(ecg_cleaned, sampling_rate=sfreq, method="pantompkins1985", correct_artifacts=True)
-                    # --- END OF THE FIX ---
-
-                    rpeaks = rpeaks_info[0]['ECG_R_Peaks']
+                    # IMPORTANT: Pass the *relative* indices (i.e., timestamps) to nk.hrv
+                    # We subtract the segment_start_sample to make the time relative
+                    relative_segment_rpeaks = segment_rpeaks_indices - segment_start_sample
                     
                     # Get HRV features
-                    hrv_features = get_hrv_features(rpeaks, sfreq)
+                    hrv_features = get_hrv_features(relative_segment_rpeaks, sfreq)
                     
                     if not hrv_features.empty:
                         all_hrv_features.append(hrv_features)
                 
                 if not all_hrv_features:
+                    # This is our safety net error, but it's much less likely to be hit now.
                     st.error("Could not extract any valid HRV data from this file. The signal may be too noisy.")
                     st.stop()
 
@@ -205,7 +220,7 @@ if uploaded_file is not None:
                 
                 st.success(f"Successfully processed file into {len(hrv_df)} 2-minute segments.")
                 
-                # 4. CALCULATE TEMPORAL FEATURES (V6-style processing)
+                # 5. CALCULATE TEMPORAL FEATURES (V6-style processing)
                 temporal_features_list = []
                 
                 for i in range(len(hrv_df)):
@@ -219,7 +234,7 @@ if uploaded_file is not None:
                 
                 temporal_df = pd.concat(temporal_features_list, ignore_index=True)
                 
-                # 5. SCALE AND PREDICT (V7-style modeling)
+                # 6. SCALE AND PREDICT (V7-style modeling)
                 
                 # Re-order columns to match scaler and model
                 temporal_df_ordered = temporal_df[temporal_feature_names]
@@ -233,7 +248,7 @@ if uploaded_file is not None:
                 # Apply our chosen threshold
                 final_predictions = (final_probs >= PREDICTION_THRESHOLD).astype(int)
                 
-                # --- 6. DISPLAY FINAL REPORT ---
+                # --- 7. DISPLAY FINAL REPORT ---
                 st.header(f"Analysis Complete: {uploaded_file.name}")
                 
                 total_alerts = np.sum(final_predictions)
@@ -333,10 +348,8 @@ if uploaded_file is not None:
             if tmp_file_path is not None and os.path.exists(tmp_file_path):
                 try:
                     os.remove(tmp_file_path)
-                    # print(f"Removed temp file: {tmp_file_path}")
                 except Exception as e:
-                    # print(f"Could not remove temp file: {e}")
-                    pass
+                    pass # Ignore cleanup errors
 
 else:
     st.info("Upload an .edf file to begin analysis.")
