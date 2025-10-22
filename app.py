@@ -20,6 +20,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# --- Helper Function ---
+def find_ecg_channel(channel_list):
+    possible_names = ['ECG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
+    for name in possible_names:
+        if name in channel_list: return name
+    return None
+
 # Suppress all warnings for a cleaner demo
 warnings.filterwarnings('ignore')
 
