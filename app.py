@@ -19,20 +19,19 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-
 # Suppress all warnings for a cleaner demo
 warnings.filterwarnings('ignore')
 
 # --- Global Settings & Model Files ---
 MODEL_FILE = 'neuroalert_final_model_v7.pkl'
 SCALER_FILE = 'neuroalert_scaler_v6.pkl'
-PREDICTION_THRESHOLD = 0.5205 # Our "sensitivity dial"
-WINDOW_SIZE = 5 # 5 segments = 10 minutes (since each segment is 2 mins)
-SEGMENT_DURATION_SECS = 120 # 2-minute windows
-
-BASE_FEATURES = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 
-                 'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI']
+PREDICTION_THRESHOLD = 0.5205  # Our "sensitivity dial"
+WINDOW_SIZE = 5  # 5 segments = 10 minutes (since each segment is 2 mins)
+SEGMENT_DURATION_SECS = 120  # 2-minute windows
+BASE_FEATURES = [
+    'HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn', 
+    'HRV_HTI', 'LF/HF', 'SD1', 'SD2', 'SD1/SD2', 'CSI'
+]
 
 # --- Caching: Load Model & Scaler ---
 @st.cache_resource
@@ -62,24 +61,39 @@ except AttributeError:
     st.warning("Could not get feature names from scaler. Proceeding with caution.")
     temporal_feature_names = [f'{col}_{stat}_{WINDOW_SIZE}' for col in BASE_FEATURES for stat in ['mean', 'std', 'slope']]
 
+# --- Core Processing Functions ---
 
-# --- Helper Function ---
-def find_ecg_channel(channel_list):
-    possible_names = ['ECG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
+def find_ecg_channel(ch_names):
+    """
+    Find the correct ECG channel name.
+    --- THIS IS THE FIX ---
+    We are RESTORING your original V1 function to include fallbacks.
+    """
+    possible_names = ['ECG', 'EKG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
+    
+    # Prioritize exact 'ECG' or 'EKG'
+    for ch in ch_names:
+        if ch.upper() == 'ECG' or ch.upper() == 'EKG':
+            return ch
+            
+    # Use fallbacks if no exact match is found
     for name in possible_names:
-        if name in channel_list: return name
-    return None
+        if name in ch_names:
+            return name
+            
+    return None  # If no channel is found
 
 def calculate_temporal_features(window_df):
     """
-    Takes a dataframe window (most recent 10 mins) and calculates 
-    the 36 temporal features.
+    Takes a dataframe window (most recent 10 mins)
+    and calculates the 36 temporal features.
     """
     features = {}
     for col in BASE_FEATURES:
         window = window_df[col].fillna(0).replace([np.inf, -np.inf], 0)
         
         features[f'{col}_mean_{WINDOW_SIZE}'] = window.mean()
+        
         std_val = window.std()
         features[f'{col}_std_{WINDOW_SIZE}'] = std_val if np.isfinite(std_val) else 0
         
@@ -88,26 +102,27 @@ def calculate_temporal_features(window_df):
         else:
             slope = 0
         features[f'{col}_slope_{WINDOW_SIZE}'] = slope if np.isfinite(slope) else 0
+        
     return pd.DataFrame([features])
 
 # ======================================================================================
 # MAIN APP
 # ======================================================================================
+
 st.title("🧠 NeuroAlert: Seizure Risk Prediction")
 st.markdown(f"""
-    *A proof-of-concept by **Rijjul Garg (Medical Lead)** and **Parth Kapoor (Tech Lead)**.*
-    
-    **Upload a raw `.edf` file** (up to 200MB) that contains a dedicated `ECG` or `EKG` channel. 
-    The system will analyze HRV features, 10-minute trends, and use our **V7 AI Model** to predict the pre-ictal phase.
+*A proof-of-concept by **Rijjul Garg (Medical Lead)** and **Parth Kapoor (Tech Lead)**.*
+**Upload a raw `.edf` file** (up to 200MB) that contains an `ECG` or related channel (e.g., `T8-P8`).
+The system will analyze HRV features, 10-minute trends, and use our **V7 AI Model** to predict the pre-ictal phase.
 """)
 
-uploaded_file = st.file_uploader("Choose an .edf file (must contain an ECG/EKG channel)", type="edf", help="Max file size: 200MB.")
+uploaded_file = st.file_uploader("Choose an .edf file", type="edf", help="Max file size: 200MB.")
 
 if uploaded_file is not None:
+    # This is the 200MB limit
     if uploaded_file.size > 200 * 1024 * 1024:
         st.error("File is too large. Please upload an .edf file under 200MB.")
     else:
-        
         if st.button("Analyze Full Recording"):
             tmp_file_path = None
             try:
@@ -122,19 +137,20 @@ if uploaded_file is not None:
                     raw = mne.io.read_raw_edf(tmp_file_path, preload=False, verbose='error')
                     sampling_rate = int(raw.info['sfreq'])
                     
-                    # --- BUG FIX: Use the new, safer channel finder ---
+                    # --- BUG FIX: Use the V1 channel finder ---
                     ecg_channel = find_ecg_channel(raw.info['ch_names'])
-                    
+
                     if not ecg_channel:
-                        st.error(f"**Analysis Failed:** Could not find a dedicated 'ECG' or 'EKG' channel in this file.")
+                        st.error(f"**Analysis Failed:** Could not find a standard ECG channel (ECG, EKG, T8-P8) in this file.")
                         st.info(f"Channels found in this file: {', '.join(raw.info['ch_names'])}")
-                        st.stop() # Stop the app safely
-                    # --- END OF BUG FIX ---
-
-                    st.success(f"File loaded. Analyzing ECG channel: '{ecg_channel}' @ {sampling_rate} Hz.")
+                        st.stop()
+                    
+                    st.success(f"File loaded. Analyzing signal from channel: '{ecg_channel}' @ {sampling_rate} Hz.")
+                    
                     segment_length_samples = SEGMENT_DURATION_SECS * sampling_rate
+                    total_segments_to_process = len(range(0, raw.n_times - segment_length_samples, segment_length_samples))
 
-                with st.spinner(f"Step 2/4: Processing signal into {len(range(0, raw.n_times - segment_length_samples, segment_length_samples))} 2-min segments..."):
+                with st.spinner(f"Step 2/4: Processing signal into {total_segments_to_process} 2-min segments..."):
                     base_features_list = []
                     
                     # --- LOOP 1: V1-style Robust Feature Extraction (Memory-Safe) ---
@@ -148,20 +164,21 @@ if uploaded_file is not None:
                             # Use the robust, all-in-one 'ecg_process' on the 2-min chunk
                             df_feat, info = nk.ecg_process(segment_ecg, sampling_rate=sampling_rate)
                             rpeaks = info['ECG_R_Peaks']
-                            
-                            if len(rpeaks) < 10: # Need enough heartbeats
-                                continue # Skip this noisy segment
+
+                            if len(rpeaks) < 10:
+                                # Need enough heartbeats
+                                continue  # Skip this noisy segment
 
                             # Calculate HRV features
                             hrv_features = nk.hrv(rpeaks, sampling_rate=sampling_rate, show=False)
-                            
+
                             # Build the feature dictionary (this is robust)
                             features = {
                                 'HR': np.mean(df_feat['ECG_Rate']),
                                 'MeanNN': hrv_features['HRV_MeanNN'].iloc[0],
                                 'SDNN': hrv_features['HRV_SDNN'].iloc[0],
                                 'RMSSD': hrv_features['HRV_RMSSD'].iloc[0],
-                                'pNN50': hrv_features['HRV_pNN5D'].iloc[0],  # Common typo fix: pNN5D -> pNN50
+                                'pNN50': hrv_features['HRV_pNN50'].iloc[0],
                                 'SampEn': hrv_features['HRV_SampEn'].iloc[0],
                                 'HRV_HTI': hrv_features['HRV_HTI'].iloc[0],
                                 'LF/HF': hrv_features['HRV_LFHF'].iloc[0],
@@ -170,25 +187,25 @@ if uploaded_file is not None:
                                 'SD1/SD2': hrv_features['HRV_SD1'].iloc[0] / hrv_features['HRV_SD2'].iloc[0] if hrv_features['HRV_SD2'].iloc[0] != 0 else 0,
                                 'CSI': hrv_features['HRV_CSI'].iloc[0]
                             }
-                            # Ensure all base features are present
+                            # Enforce all columns are present, even if nk.hrv fails on one
                             for f in BASE_FEATURES:
                                 if f not in features:
                                     features[f] = 0
-                                    
+
                             base_features_list.append(features)
                             
                         except Exception as e:
                             # This segment was noisy, just skip it and continue
                             pass # This is the V1-style error handling
 
-                if not base_features_list:
-                    st.error("Could not extract any valid HRV data. The signal is likely too noisy or the selected channel is not ECG.")
-                    st.stop()
-                
-                hrv_df = pd.DataFrame(base_features_list)[BASE_FEATURES] # Enforce column order
-                hrv_df = hrv_df.fillna(0).replace([np.inf, -np.inf], 0)
-                st.success(f"Step 2 Complete: Extracted 12 HRV features from {len(hrv_df)} valid segments.")
-                
+                    if not base_features_list:
+                        st.error("Could not extract any valid HRV data. The signal is likely too noisy or the selected channel is not ECG.")
+                        st.stop()
+
+                    hrv_df = pd.DataFrame(base_features_list)[BASE_FEATURES] # Enforce column order
+                    hrv_df = hrv_df.fillna(0).replace([np.inf, -np.inf], 0)
+                    st.success(f"Step 2 Complete: Extracted 12 HRV features from {len(hrv_df)} valid segments.")
+
                 # --- LOOP 2: V6-style Temporal Feature Generation ---
                 with st.spinner("Step 3/4: Analyzing 10-minute trends..."):
                     temporal_features_list = []
@@ -207,22 +224,21 @@ if uploaded_file is not None:
                     X_final = scaler.transform(temporal_df_ordered)
                     final_probs = model.predict_proba(X_final)[:, 1]
                     final_predictions = (final_probs >= PREDICTION_THRESHOLD).astype(int)
-
+                
                 st.success("Analysis Complete!")
 
                 # --- 4. DISPLAY FINAL REPORT ---
                 st.header(f"Analysis Report: {uploaded_file.name}")
-                
+
                 total_alerts = np.sum(final_predictions)
-                
                 st.metric("Total Pre-Ictal Alerts Detected", f"{total_alerts} segments")
                 if total_alerts > 0:
                     st.warning("High-risk pre-ictal patterns were detected in this file.", icon="🚨")
                 else:
                     st.success("No significant pre-ictal patterns were detected.", icon="✅")
-                    
-                st.markdown("---")
                 
+                st.markdown("---")
+
                 # Create a results dataframe for charting
                 results_df = pd.DataFrame({
                     'Time (minutes)': (np.arange(len(final_probs)) * 2) + 2, # Time starts at 2 mins
@@ -230,26 +246,28 @@ if uploaded_file is not None:
                     'Threshold': PREDICTION_THRESHOLD,
                     'Alert': final_predictions
                 })
-                
+
                 st.subheader("Prediction Confidence Over Time")
-                
                 # Melt for Altair
                 prob_chart_data = results_df.melt(
                     'Time (minutes)', 
                     var_name='Metric', 
-                    value_name='Probability',
+                    value_name='Probability', 
                     value_vars=['Seizure Probability', 'Threshold']
                 )
-
+                
                 prob_chart = alt.Chart(prob_chart_data).mark_line(point=False).encode(
                     x=alt.X('Time (minutes)', axis=alt.Axis(title='Time (minutes)')),
                     y=alt.Y('Probability', min=0, max=1, axis=alt.Axis(format='%')),
                     color=alt.Color('Metric', legend=alt.Legend(title="Metric"))
                 ).interactive()
-                
+
                 # Add red dots for alerts
                 alert_points = alt.Chart(results_df[results_df['Alert'] == 1]).mark_point(
-                    color='red', size=100, filled=True, opacity=1
+                    color='red',
+                    size=100,
+                    filled=True,
+                    opacity=1
                 ).encode(
                     x=alt.X('Time (minutes)'),
                     y=alt.Y('Seizure Probability', axis=alt.Axis(format='%')),
@@ -258,13 +276,12 @@ if uploaded_file is not None:
                         alt.Tooltip('Seizure Probability', format='.1%')
                     ]
                 )
-                
+
                 final_prob_chart = prob_chart + alert_points
                 st.altair_chart(final_prob_chart, use_container_width=True)
-                
+
                 # Show key biomarker charts
                 st.subheader("HRV Biomarker Trends (Raw 2-min data)")
-                
                 # Add time column to original HRV data
                 hrv_df['Time (minutes)'] = (hrv_df.index * 2) + 2
                 
@@ -288,8 +305,8 @@ if uploaded_file is not None:
 
             except Exception as e:
                 st.error(f"An error occurred during processing: {e}", icon="⚠️")
-                st.error("This file may be corrupted, or contain a signal that is too noisy for analysis.")
-                st.exception(e) 
+                st.error("This file may be corrupted, have no valid ECG channel, or contain a signal that is too noisy for analysis.")
+                st.exception(e)
             
             finally:
                 # Always delete the temporary file
