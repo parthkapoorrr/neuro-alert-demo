@@ -1,6 +1,6 @@
 streamlit
-mne
-neurokit2
-xgboost
+pandas
+numpy
 scikit-learn
-imblearn
+imbalanced-learn
+scipy
