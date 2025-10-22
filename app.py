@@ -10,8 +10,8 @@ from scipy.stats import linregress
 from scipy import signal
 import re
 import warnings
-import tempfile  # <-- ADDED for temporary files
-import os        # <-- ADDED for file operations
+import tempfile  
+import os        
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -46,6 +46,7 @@ BASE_FEATURES = ['HR', 'MeanNN', 'SDNN', 'RMSSD', 'pNN50', 'SampEn',
 # --- Caching: Load Model & Scaler ---
 @st.cache_resource
 def load_model_and_scaler():
+    """Loads the V7 model and V6 scaler from disk."""
     try:
         model = joblib.load(MODEL_FILE)
         scaler = joblib.load(SCALER_FILE)
@@ -63,7 +64,13 @@ if model is None or scaler is None:
     st.stop()
 
 # Get the exact 36-feature order the scaler expects
-temporal_feature_names = scaler.get_feature_names_out()
+try:
+    temporal_feature_names = scaler.get_feature_names_out()
+except AttributeError:
+    # Fallback for older scikit-learn versions
+    st.warning("Could not get feature names from scaler. Proceeding with caution.")
+    temporal_feature_names = [f'{col}_{stat}_{WINDOW_SIZE}' for col in BASE_FEATURES for stat in ['mean', 'std', 'slope']]
+
 
 # --- Core Processing Functions ---
 
@@ -72,9 +79,9 @@ def find_ecg_channel(ch_names):
     for ch in ch_names:
         if "ECG" in ch.upper() or "EKG" in ch.upper():
             return ch
-    # Fallback if no ECG channel is obvious (e.g., in some 'chb24' files)
+    # Fallback if no ECG channel is obvious
     for ch in ch_names:
-        if "T8-P8" in ch: # A common channel
+        if "T8-P8" in ch: # A common channel in this dataset
             return ch
     return None
 
@@ -82,8 +89,9 @@ def get_hrv_features(rpeaks, sfreq):
     """
     Extracts the 12 key HRV features from a list of R-peaks.
     """
+    # Need at least 10 R-peaks to calculate reliable features
     if len(rpeaks) < 10:
-        return pd.DataFrame(columns=BASE_FEATURES) # Not enough data
+        return pd.DataFrame(columns=BASE_FEATURES) 
 
     try:
         hrv_features = nk.hrv(rpeaks, sampling_rate=sfreq, show=False)
@@ -114,6 +122,7 @@ def calculate_temporal_features(window_df):
         
         # 3. Slope (Trend)
         if len(window) > 1:
+            # Use np.arange for the x-axis of the trend line
             slope = linregress(np.arange(len(window)), window).slope
         else:
             slope = 0
@@ -139,20 +148,16 @@ if uploaded_file is not None:
     else:
         st.sidebar.info(f"File '{uploaded_file.name}' received. Starting analysis.")
         
-        # Define tmp_file_path outside the 'try' block
         tmp_file_path = None 
         try:
-            # --- START OF THE FIX ---
             # 1. Create a temporary file and write the uploaded data to it
             with tempfile.NamedTemporaryFile(delete=False, suffix='.edf') as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
-                tmp_file_path = tmp_file.name  # Get the path (string) of the temp file
-            # --- END OF THE FIX ---
-
+                tmp_file_path = tmp_file.name  
+            
             with st.spinner("Analyzing EDF file... This may take 1-3 minutes. Please wait."):
                 
                 # 1. LOAD AND PROCESS EDF
-                # Now, we use the string path 'tmp_file_path'
                 raw = mne.io.read_raw_edf(tmp_file_path, preload=True, verbose='error')
                 sfreq = int(raw.info['sfreq'])
                 
@@ -169,16 +174,20 @@ if uploaded_file is not None:
                 segment_length_samples = SEGMENT_DURATION_SECS * sfreq
                 all_hrv_features = []
                 
-                total_segments = range(0, raw.n_times - segment_length_samples, segment_length_samples)
+                total_segments_indices = range(0, raw.n_times - segment_length_samples, segment_length_samples)
                 
-                for i in total_segments:
+                for i in total_segments_indices:
                     segment_ecg = ecg_signal[i : i + segment_length_samples]
                     
                     # Clean the segment
                     ecg_cleaned = nk.ecg_clean(segment_ecg, sampling_rate=sfreq, method="neurokit")
                     
                     # Find R-peaks
-                    rpeaks_info = nk.ecg_peaks(ecg_cleaned, sampling_rate=sfreq, method="neurokit", correct_artifacts=True)
+                    # --- THIS IS THE FIX ---
+                    # Switched from "neurokit" to "pantompkins1985" for better noise resistance
+                    rpeaks_info = nk.ecg_peaks(ecg_cleaned, sampling_rate=sfreq, method="pantompkins1985", correct_artifacts=True)
+                    # --- END OF THE FIX ---
+
                     rpeaks = rpeaks_info[0]['ECG_R_Peaks']
                     
                     # Get HRV features
@@ -200,12 +209,10 @@ if uploaded_file is not None:
                 temporal_features_list = []
                 
                 for i in range(len(hrv_df)):
-                    if i < WINDOW_SIZE - 1:
-                        # For the first few segments, we don't have a full 10-min window
-                        window_df = hrv_df.iloc[0 : i + 1]
-                    else:
-                        # This is the 10-minute (5-segment) rolling window
-                        window_df = hrv_df.iloc[i - (WINDOW_SIZE - 1) : i + 1]
+                    # Get the start index for the window
+                    start_idx = max(0, i - (WINDOW_SIZE - 1))
+                    # Get the current window of data
+                    window_df = hrv_df.iloc[start_idx : i + 1]
                     
                     temporal_features = calculate_temporal_features(window_df)
                     temporal_features_list.append(temporal_features)
@@ -241,7 +248,8 @@ if uploaded_file is not None:
                 
                 # Create a results dataframe for charting
                 results_df = pd.DataFrame({
-                    'Time (minutes)': (np.arange(len(final_probs)) * 2) + 10, # Start chart after 1st 10-min window
+                    # Time starts at 2 mins (end of first segment)
+                    'Time (minutes)': (np.arange(len(final_probs)) * 2) + 2, 
                     'Seizure Probability': final_probs,
                     'Threshold': PREDICTION_THRESHOLD,
                     'Alert': final_predictions
@@ -260,7 +268,7 @@ if uploaded_file is not None:
                 prob_chart = alt.Chart(prob_chart_data).mark_line(point=False).encode(
                     x=alt.X('Time (minutes)', axis=alt.Axis(title='Time (minutes)')),
                     y=alt.Y('Probability', min=0, max=1, axis=alt.Axis(format='%')),
-                    color='Metric'
+                    color=alt.Color('Metric', legend=alt.Legend(title="Metric"))
                 ).interactive()
                 
                 # Add red dots for alerts
@@ -313,15 +321,22 @@ if uploaded_file is not None:
                     st.dataframe(pd.concat([hrv_df, results_df.drop(columns='Time (minutes)')], axis=1))
 
         except Exception as e:
-            st.error(f"An error occurred during processing: {e}")
-            st.error("This file may be corrupted, have no ECG channel, or contain a signal that is too noisy.")
+            # This is our custom error block
+            st.error(f"An error occurred during processing: {e}", icon="⚠️")
+            st.error("This file may be corrupted, have no valid ECG channel, or contain a signal that is too noisy for analysis.")
+            # This line is for debugging, you can comment it out later
+            st.exception(e) 
         
         finally:
             # --- CLEANUP ---
             # Always delete the temporary file, even if the app crashes
             if tmp_file_path is not None and os.path.exists(tmp_file_path):
-                os.remove(tmp_file_path)
-                # print(f"Removed temp file: {tmp_file_path}")
+                try:
+                    os.remove(tmp_file_path)
+                    # print(f"Removed temp file: {tmp_file_path}")
+                except Exception as e:
+                    # print(f"Could not remove temp file: {e}")
+                    pass
 
 else:
     st.info("Upload an .edf file to begin analysis.")
