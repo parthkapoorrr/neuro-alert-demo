@@ -10,6 +10,8 @@ from scipy.stats import linregress
 from scipy import signal
 import re
 import warnings
+import tempfile  # <-- ADDED for temporary files
+import os        # <-- ADDED for file operations
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -71,7 +73,6 @@ def find_ecg_channel(ch_names):
         if "ECG" in ch.upper() or "EKG" in ch.upper():
             return ch
     # Fallback if no ECG channel is obvious (e.g., in some 'chb24' files)
-    # This is a guess; robust implementation would require user selection
     for ch in ch_names:
         if "T8-P8" in ch: # A common channel
             return ch
@@ -91,7 +92,6 @@ def get_hrv_features(rpeaks, sfreq):
         return hrv_features_selected
     except Exception as e:
         # Catch errors from neurokit (e.g., "ZeroDivisionError")
-        # print(f"NeuroKit HRV analysis failed: {e}")
         return pd.DataFrame(columns=BASE_FEATURES)
 
 def calculate_temporal_features(window_df):
@@ -103,23 +103,24 @@ def calculate_temporal_features(window_df):
     
     # Calculate 10-minute trends (mean, std, slope)
     for col in BASE_FEATURES:
-        window = window_df[col]
+        window = window_df[col].fillna(0).replace([np.inf, -np.inf], 0)
         
         # 1. Mean
         features[f'{col}_mean_{WINDOW_SIZE}'] = window.mean()
         
         # 2. Standard Deviation (Volatility)
-        features[f'{col}_std_{WINDOW_SIZE}'] = window.std()
+        std_val = window.std()
+        features[f'{col}_std_{WINDOW_SIZE}'] = std_val if np.isfinite(std_val) else 0
         
         # 3. Slope (Trend)
         if len(window) > 1:
             slope = linregress(np.arange(len(window)), window).slope
         else:
             slope = 0
-        features[f'{col}_slope_{WINDOW_SIZE}'] = slope
+        features[f'{col}_slope_{WINDOW_SIZE}'] = slope if np.isfinite(slope) else 0
 
     # Return as a single-row DataFrame
-    return pd.DataFrame([features]).fillna(0)
+    return pd.DataFrame([features])
 
 
 # --- Main Application Logic ---
@@ -136,12 +137,23 @@ if uploaded_file is not None:
     if uploaded_file.size > 200 * 1024 * 1024:
         st.error("File is too large. Please upload an .edf file under 200MB.")
     else:
-        st.sidebar.info(f"File '{uploaded_file.name}' uploaded. Processing will begin.")
+        st.sidebar.info(f"File '{uploaded_file.name}' received. Starting analysis.")
         
-        with st.spinner("Analyzing EDF file... This may take 1-3 minutes. Please wait."):
-            try:
+        # Define tmp_file_path outside the 'try' block
+        tmp_file_path = None 
+        try:
+            # --- START OF THE FIX ---
+            # 1. Create a temporary file and write the uploaded data to it
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.edf') as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                tmp_file_path = tmp_file.name  # Get the path (string) of the temp file
+            # --- END OF THE FIX ---
+
+            with st.spinner("Analyzing EDF file... This may take 1-3 minutes. Please wait."):
+                
                 # 1. LOAD AND PROCESS EDF
-                raw = mne.io.read_raw_edf(uploaded_file, preload=True, verbose='error')
+                # Now, we use the string path 'tmp_file_path'
+                raw = mne.io.read_raw_edf(tmp_file_path, preload=True, verbose='error')
                 sfreq = int(raw.info['sfreq'])
                 
                 # 2. FIND ECG CHANNEL
@@ -300,10 +312,16 @@ if uploaded_file is not None:
                 with st.expander("Show Raw Data and Predictions"):
                     st.dataframe(pd.concat([hrv_df, results_df.drop(columns='Time (minutes)')], axis=1))
 
-            except Exception as e:
-                st.error(f"An error occurred during processing: {e}")
-                st.error("This file may be corrupted, have no ECG channel, or contain a signal that is too noisy.")
+        except Exception as e:
+            st.error(f"An error occurred during processing: {e}")
+            st.error("This file may be corrupted, have no ECG channel, or contain a signal that is too noisy.")
+        
+        finally:
+            # --- CLEANUP ---
+            # Always delete the temporary file, even if the app crashes
+            if tmp_file_path is not None and os.path.exists(tmp_file_path):
+                os.remove(tmp_file_path)
+                # print(f"Removed temp file: {tmp_file_path}")
 
 else:
     st.info("Upload an .edf file to begin analysis.")
-
