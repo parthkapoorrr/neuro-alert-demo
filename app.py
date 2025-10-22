@@ -20,12 +20,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- Helper Function ---
-def find_ecg_channel(channel_list):
-    possible_names = ['ECG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
-    for name in possible_names:
-        if name in channel_list: return name
-    return None
 
 # Suppress all warnings for a cleaner demo
 warnings.filterwarnings('ignore')
@@ -69,21 +63,12 @@ except AttributeError:
     temporal_feature_names = [f'{col}_{stat}_{WINDOW_SIZE}' for col in BASE_FEATURES for stat in ['mean', 'std', 'slope']]
 
 
-# --- Core Processing Functions ---
-def find_ecg_channel(ch_names):
-    """
-    Find the correct ECG channel name.
-    --- THIS IS THE FIX ---
-    We ONLY look for 'ECG' or 'EKG'. We no longer fall back to
-    EEG channels like 'T8-P8', which was causing the crash.
-    """
-    for ch in ch_names:
-        # Check for exact matches or common naming conventions
-        if ch.upper() == 'ECG' or ch.upper() == 'EKG':
-            return ch
-        if 'ECG' in ch.upper() or 'EKG' in ch.upper():
-            return ch
-    return None # If no true ECG channel is found, return None
+# --- Helper Function ---
+def find_ecg_channel(channel_list):
+    possible_names = ['ECG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
+    for name in possible_names:
+        if name in channel_list: return name
+    return None
 
 def calculate_temporal_features(window_df):
     """
