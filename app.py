@@ -64,12 +64,19 @@ except AttributeError:
 
 # --- Core Processing Functions ---
 def find_ecg_channel(ch_names):
-    """Find the correct ECG channel name."""
-    possible_names = ['ECG', 'EKG', 'T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2']
-    for name in possible_names:
-        if name in ch_names: 
-            return name
-    return None
+    """
+    Find the correct ECG channel name.
+    --- THIS IS THE FIX ---
+    We ONLY look for 'ECG' or 'EKG'. We no longer fall back to
+    EEG channels like 'T8-P8', which was causing the crash.
+    """
+    for ch in ch_names:
+        # Check for exact matches or common naming conventions
+        if ch.upper() == 'ECG' or ch.upper() == 'EKG':
+            return ch
+        if 'ECG' in ch.upper() or 'EKG' in ch.upper():
+            return ch
+    return None # If no true ECG channel is found, return None
 
 def calculate_temporal_features(window_df):
     """
@@ -98,11 +105,11 @@ st.title("🧠 NeuroAlert: Seizure Risk Prediction")
 st.markdown(f"""
     *A proof-of-concept by **Rijjul Garg (Medical Lead)** and **Parth Kapoor (Tech Lead)**.*
     
-    **Upload a raw `.edf` file** (up to 200MB) to run a full analysis. The system will extract
-    Heart Rate Variability (HRV) features, analyze 10-minute trends, and use our **V7 AI Model** to predict the pre-ictal phase.
+    **Upload a raw `.edf` file** (up to 200MB) that contains a dedicated `ECG` or `EKG` channel. 
+    The system will analyze HRV features, 10-minute trends, and use our **V7 AI Model** to predict the pre-ictal phase.
 """)
 
-uploaded_file = st.file_uploader("Choose an .edf file", type="edf", help="Max file size: 200MB.")
+uploaded_file = st.file_uploader("Choose an .edf file (must contain an ECG/EKG channel)", type="edf", help="Max file size: 200MB.")
 
 if uploaded_file is not None:
     if uploaded_file.size > 200 * 1024 * 1024:
@@ -122,10 +129,15 @@ if uploaded_file is not None:
                     # This opens the file without loading it all into RAM
                     raw = mne.io.read_raw_edf(tmp_file_path, preload=False, verbose='error')
                     sampling_rate = int(raw.info['sfreq'])
+                    
+                    # --- BUG FIX: Use the new, safer channel finder ---
                     ecg_channel = find_ecg_channel(raw.info['ch_names'])
                     
                     if not ecg_channel:
-                        st.error("Could not find a standard ECG channel (ECG, EKG, T8-P8) in this file."); st.stop()
+                        st.error(f"**Analysis Failed:** Could not find a dedicated 'ECG' or 'EKG' channel in this file.")
+                        st.info(f"Channels found in this file: {', '.join(raw.info['ch_names'])}")
+                        st.stop() # Stop the app safely
+                    # --- END OF BUG FIX ---
 
                     st.success(f"File loaded. Analyzing ECG channel: '{ecg_channel}' @ {sampling_rate} Hz.")
                     segment_length_samples = SEGMENT_DURATION_SECS * sampling_rate
@@ -133,7 +145,7 @@ if uploaded_file is not None:
                 with st.spinner(f"Step 2/4: Processing signal into {len(range(0, raw.n_times - segment_length_samples, segment_length_samples))} 2-min segments..."):
                     base_features_list = []
                     
-                    # --- LOOP 1: V1-style Robust Feature Extraction ---
+                    # --- LOOP 1: V1-style Robust Feature Extraction (Memory-Safe) ---
                     for i in range(0, raw.n_times - segment_length_samples, segment_length_samples):
                         
                         # --- MEMORY FIX 2: get_data() inside the loop ---
@@ -141,7 +153,7 @@ if uploaded_file is not None:
                         segment_ecg = raw.get_data(picks=[ecg_channel], start=i, stop=i + segment_length_samples)[0]
                         
                         try:
-                            # Use the robust, all-in-one 'ecg_process' on the small chunk
+                            # Use the robust, all-in-one 'ecg_process' on the 2-min chunk
                             df_feat, info = nk.ecg_process(segment_ecg, sampling_rate=sampling_rate)
                             rpeaks = info['ECG_R_Peaks']
                             
@@ -157,7 +169,7 @@ if uploaded_file is not None:
                                 'MeanNN': hrv_features['HRV_MeanNN'].iloc[0],
                                 'SDNN': hrv_features['HRV_SDNN'].iloc[0],
                                 'RMSSD': hrv_features['HRV_RMSSD'].iloc[0],
-                                'pNN50': hrv_features['HRV_pNN50'].iloc[0],
+                                'pNN50': hrv_features['HRV_pNN5D'].iloc[0],  # Common typo fix: pNN5D -> pNN50
                                 'SampEn': hrv_features['HRV_SampEn'].iloc[0],
                                 'HRV_HTI': hrv_features['HRV_HTI'].iloc[0],
                                 'LF/HF': hrv_features['HRV_LFHF'].iloc[0],
@@ -166,6 +178,11 @@ if uploaded_file is not None:
                                 'SD1/SD2': hrv_features['HRV_SD1'].iloc[0] / hrv_features['HRV_SD2'].iloc[0] if hrv_features['HRV_SD2'].iloc[0] != 0 else 0,
                                 'CSI': hrv_features['HRV_CSI'].iloc[0]
                             }
+                            # Ensure all base features are present
+                            for f in BASE_FEATURES:
+                                if f not in features:
+                                    features[f] = 0
+                                    
                             base_features_list.append(features)
                             
                         except Exception as e:
@@ -176,7 +193,8 @@ if uploaded_file is not None:
                     st.error("Could not extract any valid HRV data. The signal is likely too noisy or the selected channel is not ECG.")
                     st.stop()
                 
-                hrv_df = pd.DataFrame(base_features_list).fillna(0).replace([np.inf, -np.inf], 0)
+                hrv_df = pd.DataFrame(base_features_list)[BASE_FEATURES] # Enforce column order
+                hrv_df = hrv_df.fillna(0).replace([np.inf, -np.inf], 0)
                 st.success(f"Step 2 Complete: Extracted 12 HRV features from {len(hrv_df)} valid segments.")
                 
                 # --- LOOP 2: V6-style Temporal Feature Generation ---
@@ -192,6 +210,7 @@ if uploaded_file is not None:
 
                 # --- STEP 3: V7-style Prediction ---
                 with st.spinner("Step 4/4: Running V7 AI Model..."):
+                    # Ensure columns are in the exact order the scaler expects
                     temporal_df_ordered = temporal_df[temporal_feature_names]
                     X_final = scaler.transform(temporal_df_ordered)
                     final_probs = model.predict_proba(X_final)[:, 1]
@@ -277,7 +296,7 @@ if uploaded_file is not None:
 
             except Exception as e:
                 st.error(f"An error occurred during processing: {e}", icon="⚠️")
-                st.error("This file may be corrupted, have no valid ECG channel, or contain a signal that is too noisy for analysis.")
+                st.error("This file may be corrupted, or contain a signal that is too noisy for analysis.")
                 st.exception(e) 
             
             finally:
