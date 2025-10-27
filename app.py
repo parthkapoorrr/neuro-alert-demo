@@ -419,8 +419,8 @@ SEGMENT_DURATION_SECS = 120
 @st.cache_resource
 def load_model_and_scaler():
     try:
-        model = joblib.load("neuroalert_ecg_final.pkl")
-        scaler = joblib.load("neuroalert_ecg_scaler.pkl")
+        model = joblib.load("neuroalert_final_model_v7.pkl")
+        scaler = joblib.load("neuroalert_final_scaler_v6.pkl")
         return model, scaler, None
     except:
         try:
