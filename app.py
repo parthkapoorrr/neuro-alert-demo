@@ -1,19 +1,24 @@
 import streamlit as st
-import mne
-import neurokit2 as nk
 import numpy as np
 import pandas as pd
-import joblib
-import xgboost as xgb
-import warnings
-import tempfile
-import os
-import time
-import datetime
+from scipy import signal
+from scipy.signal import butter, sosfilt, find_peaks
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import pickle
+import warnings
+warnings.filterwarnings('ignore')
 
-# Page Configuration
+# For EDF file reading
+try:
+    import mne
+    EDF_SUPPORT = True
+except ImportError:
+    EDF_SUPPORT = False
+
+# ============================================================================
+# PAGE CONFIGURATION
+# ============================================================================
 st.set_page_config(
     page_title="NeuroAlert - AI Seizure Prediction",
     page_icon="🧠",
@@ -21,363 +26,265 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-warnings.filterwarnings('ignore')
-
-# Custom CSS - Pure Black Background with Fixed Sidebar
+# ============================================================================
+# CUSTOM CSS - DEEP PURPLE/SOFT LILAC THEME
+# ============================================================================
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
-    
-    * { font-family: 'Inter', sans-serif; }
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-    
-    /* Hamburger Menu Button */
-    [data-testid="collapsedControl"] {
-        display: flex !important;
-        position: fixed;
-        top: 1rem;
-        left: 1rem;
-        z-index: 999999;
-        background: linear-gradient(135deg, #4a90e2 0%, #7b68ee 100%) !important;
-        border-radius: 12px !important;
-        padding: 0.75rem !important;
-        border: 2px solid rgba(255, 255, 255, 0.3) !important;
-        box-shadow: 0 4px 15px rgba(74, 144, 226, 0.5) !important;
-        transition: all 0.3s ease !important;
+    /* Color Palette Variables */
+    :root {
+        --primary-purple: #5B2E90;
+        --secondary-lilac: #BFA2DB;
+        --background-white: #F7F4FB;
+        --accent-purple: #7B4FB8;
+        --dark-purple: #3D1B5C;
     }
     
-    [data-testid="collapsedControl"]:hover {
-        transform: scale(1.1) !important;
-        box-shadow: 0 6px 20px rgba(74, 144, 226, 0.7) !important;
-        border-color: rgba(255, 255, 255, 0.5) !important;
-    }
-    
-    [data-testid="collapsedControl"] svg {
-        color: white !important;
-        width: 24px !important;
-        height: 24px !important;
-    }
-    
-    /* Pure Black Background */
+    /* Main Background */
     .stApp {
-        background: #000000 !important;
+        background: linear-gradient(135deg, #F7F4FB 0%, #E8DFF5 100%);
     }
     
-    /* Sidebar - Visible and Styled */
+    /* Hide Streamlit Branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Main Title - WHITE COLOR */
+    .main-title {
+        text-align: center;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+        background: linear-gradient(135deg, #5B2E90 0%, #7B4FB8 100%);
+        border-radius: 20px;
+        box-shadow: 0 10px 40px rgba(91, 46, 144, 0.3);
+        animation: glow 2s ease-in-out infinite alternate;
+    }
+    
+    .main-title h1 {
+        color: #FFFFFF !important;
+        font-size: 4rem !important;
+        font-weight: 900 !important;
+        margin: 0 !important;
+        text-shadow: 0 0 20px rgba(255, 255, 255, 0.5);
+        letter-spacing: 2px;
+    }
+    
+    .main-title p {
+        color: #F7F4FB !important;
+        font-size: 1.3rem !important;
+        margin: 10px 0 0 0 !important;
+        font-weight: 300;
+        opacity: 0.95;
+    }
+    
+    /* Glowing Animation */
+    @keyframes glow {
+        from {
+            box-shadow: 0 10px 40px rgba(91, 46, 144, 0.3),
+                        0 0 20px rgba(191, 162, 219, 0.2);
+        }
+        to {
+            box-shadow: 0 15px 60px rgba(91, 46, 144, 0.5),
+                        0 0 40px rgba(191, 162, 219, 0.4);
+        }
+    }
+    
+    /* Sidebar Styling */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0a0a0a 0%, #1a1a1a 100%) !important;
-        border-right: 1px solid #333;
+        background: linear-gradient(180deg, #5B2E90 0%, #7B4FB8 100%);
+        padding: 2rem 1rem;
     }
     
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h1,
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2,
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3,
-    [data-testid="stSidebar"] label {
-        color: #ffffff !important;
+    [data-testid="stSidebar"] * {
+        color: #FFFFFF !important;
     }
     
-    [data-testid="stSidebar"] .stMetric label {
-        color: #a0a0a0 !important;
-    }
-    
-    [data-testid="stSidebar"] .stMetric [data-testid="stMetricValue"] {
-        color: #ffffff !important;
-    }
-    
-    /* Header */
-    .main-header {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-        padding: 3rem 2rem;
-        border-radius: 20px;
-        text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 20px 60px rgba(0, 100, 255, 0.3);
-        border: 1px solid rgba(100, 150, 255, 0.2);
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .main-header::before {
-        content: '';
-        position: absolute;
-        top: -50%;
-        left: -50%;
-        width: 200%;
-        height: 200%;
-        background: radial-gradient(circle, rgba(100, 150, 255, 0.1) 0%, transparent 70%);
-        animation: pulse 4s ease-in-out infinite;
-    }
-    
-    @keyframes pulse {
-        0%, 100% { transform: scale(1); opacity: 0.5; }
-        50% { transform: scale(1.1); opacity: 1; }
-    }
-    
-    .main-header h1 {
-        color: #ffffff;
-        font-size: 3.5rem;
-        font-weight: 900;
-        margin: 0;
-        position: relative;
-        z-index: 1;
-        text-shadow: 0 0 20px rgba(100, 150, 255, 0.8);
-    }
-    
-    .main-header p {
-        color: #b0c4de;
-        font-size: 1.2rem;
-        margin-top: 1rem;
-        position: relative;
-        z-index: 1;
-    }
-    
-    /* Modern File Upload Card */
-    .upload-container {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border: 2px dashed rgba(100, 150, 255, 0.4);
-        border-radius: 20px;
-        padding: 3rem;
-        text-align: center;
-        margin: 2rem 0;
+    /* File Uploader */
+    [data-testid="stFileUploader"] {
+        background: rgba(255, 255, 255, 0.15);
+        border: 2px dashed #BFA2DB;
+        border-radius: 15px;
+        padding: 2rem;
         transition: all 0.3s ease;
-        position: relative;
-        overflow: hidden;
     }
     
-    .upload-container::before {
-        content: '';
-        position: absolute;
-        inset: -2px;
-        background: linear-gradient(45deg, #4a90e2, #7b68ee, #4a90e2);
-        background-size: 300% 300%;
-        border-radius: 20px;
-        opacity: 0;
-        z-index: -1;
-        animation: border-glow 3s ease infinite;
+    [data-testid="stFileUploader"]:hover {
+        background: rgba(255, 255, 255, 0.25);
+        border-color: #FFFFFF;
     }
     
-    @keyframes border-glow {
-        0%, 100% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
-    }
-    
-    .upload-container:hover::before {
-        opacity: 1;
-    }
-    
-    .upload-container:hover {
-        border-color: #4a90e2;
-        box-shadow: 0 20px 60px rgba(74, 144, 226, 0.3);
-        transform: translateY(-5px);
-    }
-    
-    .stFileUploader {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%) !important;
-        border: 2px dashed rgba(74, 144, 226, 0.5) !important;
-        border-radius: 20px !important;
-        padding: 2rem !important;
-        margin: 1rem 0 !important;
-    }
-    
-    .stFileUploader:hover {
-        border-color: #4a90e2 !important;
-        box-shadow: 0 10px 30px rgba(74, 144, 226, 0.3) !important;
-    }
-    
-    .stFileUploader label {
-        color: #ffffff !important;
-        font-size: 1.2rem !important;
+    /* Drag and drop text - Dark purple for visibility */
+    [data-testid="stFileUploader"] label,
+    [data-testid="stFileUploader"] p,
+    [data-testid="stFileUploader"] span {
+        color: #3D1B5C !important;
         font-weight: 600 !important;
     }
     
-    .stFileUploader [data-testid="stFileUploaderDropzone"] {
-        background: rgba(74, 144, 226, 0.1) !important;
-        border: 2px dashed rgba(74, 144, 226, 0.4) !important;
-        border-radius: 15px !important;
-        padding: 3rem 2rem !important;
+    /* Browse Files Button - Match Primary Purple */
+    [data-testid="stFileUploader"] button {
+        background: linear-gradient(135deg, #5B2E90 0%, #7B4FB8 100%) !important;
+        color: #FFFFFF !important;
+        border: 2px solid #7B4FB8 !important;
+        font-weight: 700 !important;
         transition: all 0.3s ease !important;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
     
-    .stFileUploader [data-testid="stFileUploaderDropzone"]:hover {
-        background: rgba(74, 144, 226, 0.2) !important;
-        border-color: #4a90e2 !important;
-        transform: translateY(-2px) !important;
+    [data-testid="stFileUploader"] button:hover {
+        background: linear-gradient(135deg, #7B4FB8 0%, #9B6FD8 100%) !important;
+        border-color: #9B6FD8 !important;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(91, 46, 144, 0.4);
     }
     
-    .stFileUploader [data-testid="stFileUploaderDropzoneInstructions"] {
-        color: #b0c4de !important;
-        font-size: 1.1rem !important;
+    /* Uploaded Filename - Dark Purple for Contrast */
+    [data-testid="stFileUploader"] section {
+        color: #3D1B5C !important;
+        font-weight: 700 !important;
+        background: rgba(255, 255, 255, 0.9) !important;
+        padding: 8px 12px !important;
+        border-radius: 8px !important;
     }
     
-    .stFileUploader button {
-        background: linear-gradient(135deg, #4a90e2 0%, #7b68ee 100%) !important;
-        color: white !important;
-        border: none !important;
-        padding: 0.75rem 2rem !important;
-        border-radius: 10px !important;
+    [data-testid="stFileUploader"] small {
+        color: #5B2E90 !important;
         font-weight: 600 !important;
-        transition: all 0.3s ease !important;
-    }
-    
-    .stFileUploader button:hover {
-        transform: scale(1.05) !important;
-        box-shadow: 0 5px 15px rgba(74, 144, 226, 0.5) !important;
-    }
-    
-    /* Metric Cards */
-    [data-testid="stMetric"] {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        padding: 1.5rem;
-        border-radius: 15px;
-        border: 1px solid rgba(74, 144, 226, 0.3);
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
-        transition: all 0.3s ease;
-    }
-    
-    [data-testid="stMetric"]:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 25px rgba(74, 144, 226, 0.4);
-        border-color: #4a90e2;
-    }
-    
-    [data-testid="stMetric"] label {
-        color: #a0a0a0 !important;
-    }
-    
-    [data-testid="stMetric"] [data-testid="stMetricValue"] {
-        color: #ffffff !important;
-        font-size: 2rem !important;
-    }
-    
-    /* Alert Boxes */
-    .alert-danger {
-        background: linear-gradient(135deg, rgba(220, 38, 38, 0.2) 0%, rgba(185, 28, 28, 0.2) 100%);
-        border: 2px solid rgba(239, 68, 68, 0.5);
-        color: #ffffff;
-        padding: 2rem;
-        border-radius: 15px;
-        margin: 1rem 0;
-        box-shadow: 0 10px 30px rgba(220, 38, 38, 0.3);
-    }
-    
-    .alert-success {
-        background: linear-gradient(135deg, rgba(34, 197, 94, 0.2) 0%, rgba(22, 163, 74, 0.2) 100%);
-        border: 2px solid rgba(34, 197, 94, 0.5);
-        color: #ffffff;
-        padding: 2rem;
-        border-radius: 15px;
-        margin: 1rem 0;
-        box-shadow: 0 10px 30px rgba(34, 197, 94, 0.3);
-    }
-    
-    .alert-warning {
-        background: linear-gradient(135deg, rgba(234, 179, 8, 0.2) 0%, rgba(202, 138, 4, 0.2) 100%);
-        border: 2px solid rgba(234, 179, 8, 0.5);
-        color: #ffffff;
-        padding: 2rem;
-        border-radius: 15px;
-        margin: 1rem 0;
-        box-shadow: 0 10px 30px rgba(234, 179, 8, 0.3);
-    }
-    
-    /* Globe Section - Minimal */
-    .globe-section {
-        background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
-        border: 1px solid rgba(74, 144, 226, 0.2);
-        border-radius: 20px;
-        padding: 2rem;
-        margin: 3rem 0;
-        text-align: center;
-    }
-    
-    .globe-title {
-        color: #ffffff;
-        font-size: 2rem;
-        font-weight: 700;
-        margin-bottom: 2rem;
-        text-shadow: 0 0 20px rgba(74, 144, 226, 0.5);
-    }
-    
-    .stat-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1.5rem;
-        margin-top: 2rem;
-    }
-    
-    .stat-card {
-        background: linear-gradient(135deg, rgba(74, 144, 226, 0.1) 0%, rgba(123, 104, 238, 0.1) 100%);
-        border: 1px solid rgba(74, 144, 226, 0.3);
-        border-radius: 15px;
-        padding: 1.5rem;
-        transition: all 0.3s ease;
-    }
-    
-    .stat-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 30px rgba(74, 144, 226, 0.3);
-        border-color: #4a90e2;
-    }
-    
-    .stat-value {
-        font-size: 2.5rem;
-        font-weight: 900;
-        color: #4a90e2;
-        margin-bottom: 0.5rem;
-    }
-    
-    .stat-label {
-        font-size: 0.9rem;
-        color: #b0c4de;
-        font-weight: 500;
     }
     
     /* Buttons */
-    .stButton>button {
-        background: linear-gradient(135deg, #4a90e2 0%, #7b68ee 100%);
-        color: white;
+    .stButton > button {
+        background: linear-gradient(135deg, #BFA2DB 0%, #D4C2E8 100%);
+        color: #3D1B5C;
         border: none;
-        border-radius: 12px;
         padding: 0.8rem 2rem;
-        font-size: 1rem;
-        font-weight: 600;
+        font-size: 1.1rem;
+        font-weight: 700;
+        border-radius: 12px;
         transition: all 0.3s ease;
-        box-shadow: 0 8px 20px rgba(74, 144, 226, 0.4);
+        box-shadow: 0 4px 15px rgba(191, 162, 219, 0.3);
     }
     
-    .stButton>button:hover {
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #D4C2E8 0%, #BFA2DB 100%);
         transform: translateY(-2px);
-        box-shadow: 0 12px 30px rgba(74, 144, 226, 0.6);
+        box-shadow: 0 6px 25px rgba(191, 162, 219, 0.5);
+    }
+    
+    /* Glowing Cards */
+    .glow-card {
+        background: rgba(255, 255, 255, 0.95);
+        border: 2px solid #BFA2DB;
+        border-radius: 20px;
+        padding: 2rem;
+        margin: 1rem 0;
+        box-shadow: 0 8px 32px rgba(91, 46, 144, 0.15);
+        transition: all 0.3s ease;
+    }
+    
+    .glow-card:hover {
+        box-shadow: 0 12px 48px rgba(91, 46, 144, 0.25);
+        transform: translateY(-5px);
+    }
+    
+    /* Metric Cards */
+    .metric-card {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(247, 244, 251, 0.95) 100%);
+        border: 2px solid #BFA2DB;
+        border-radius: 15px;
+        padding: 1.5rem;
+        text-align: center;
+        transition: all 0.3s ease;
+        box-shadow: 0 4px 20px rgba(91, 46, 144, 0.1);
+    }
+    
+    .metric-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 35px rgba(91, 46, 144, 0.2);
+        border-color: #7B4FB8;
+    }
+    
+    /* Risk Level Cards - Purple background, colored text */
+    .risk-high {
+        background: linear-gradient(135deg, #5B2E90 0%, #7B4FB8 100%);
+        border: 3px solid #BFA2DB;
+        border-radius: 20px;
+        padding: 3rem 2rem;
+        text-align: center;
+        box-shadow: 0 10px 40px rgba(91, 46, 144, 0.4);
+        animation: pulse-purple 2s ease-in-out infinite;
+    }
+    
+    .risk-high h1 {
+        color: #ff4757 !important;
+        text-shadow: 0 0 20px rgba(255, 71, 87, 0.6);
+    }
+    
+    .risk-medium {
+        background: linear-gradient(135deg, #5B2E90 0%, #7B4FB8 100%);
+        border: 3px solid #BFA2DB;
+        border-radius: 20px;
+        padding: 3rem 2rem;
+        text-align: center;
+        box-shadow: 0 10px 40px rgba(91, 46, 144, 0.4);
+        animation: pulse-purple 2s ease-in-out infinite;
+    }
+    
+    .risk-medium h1 {
+        color: #ffc107 !important;
+        text-shadow: 0 0 20px rgba(255, 193, 7, 0.6);
+    }
+    
+    .risk-low {
+        background: linear-gradient(135deg, #5B2E90 0%, #7B4FB8 100%);
+        border: 3px solid #BFA2DB;
+        border-radius: 20px;
+        padding: 3rem 2rem;
+        text-align: center;
+        box-shadow: 0 10px 40px rgba(91, 46, 144, 0.4);
+        animation: pulse-purple 2s ease-in-out infinite;
+    }
+    
+    .risk-low h1 {
+        color: #28a745 !important;
+        text-shadow: 0 0 20px rgba(40, 167, 69, 0.6);
+    }
+    
+    @keyframes pulse-purple {
+        0%, 100% { box-shadow: 0 10px 40px rgba(91, 46, 144, 0.4); }
+        50% { box-shadow: 0 15px 60px rgba(91, 46, 144, 0.6); }
+    }
+    
+    /* Info Messages */
+    .stAlert {
+        background: rgba(255, 255, 255, 0.95) !important;
+        border: 2px solid #BFA2DB !important;
+        border-radius: 12px !important;
+        color: #3D1B5C !important;
     }
     
     /* Expander */
     .streamlit-expanderHeader {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border: 1px solid rgba(74, 144, 226, 0.3);
-        border-radius: 12px;
-        color: #ffffff !important;
+        background: linear-gradient(135deg, rgba(191, 162, 219, 0.2) 0%, rgba(212, 194, 232, 0.2) 100%);
+        border-radius: 10px;
         font-weight: 600;
-        padding: 1rem;
-    }
-    
-    .streamlit-expanderHeader:hover {
-        border-color: #4a90e2;
-        background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
+        color: #5B2E90 !important;
     }
     
     /* Progress Bar */
-    .stProgress > div > div {
-        background: linear-gradient(90deg, #4a90e2, #7b68ee);
+    .stProgress > div > div > div {
+        background: linear-gradient(90deg, #5B2E90 0%, #BFA2DB 100%);
     }
     
-    /* Text Colors */
-    h1, h2, h3, h4, h5, h6, p, span, div {
-        color: #ffffff !important;
+    /* Headers */
+    h1, h2, h3 {
+        color: #5B2E90 !important;
+        font-weight: 700;
     }
     
-    .stMarkdown {
-        color: #ffffff !important;
+    p, li, span {
+        color: #3D1B5C;
     }
     
     /* Scrollbar */
@@ -387,455 +294,1137 @@ st.markdown("""
     }
     
     ::-webkit-scrollbar-track {
-        background: #0a0a0a;
-    }
-    
-    ::-webkit-scrollbar-thumb {
-        background: linear-gradient(135deg, #4a90e2 0%, #7b68ee 100%);
+        background: #F7F4FB;
         border-radius: 10px;
     }
     
-    ::-webkit-scrollbar-thumb:hover {
-        background: linear-gradient(135deg, #7b68ee 0%, #4a90e2 100%);
-    }
-    
-    /* Toggle Switch */
-    .stCheckbox {
-        color: #ffffff !important;
-    }
-    
-    .stCheckbox label {
-        color: #ffffff !important;
+    ::-webkit-scrollbar-thumb {
+        background: linear-gradient(180deg, #5B2E90 0%, #BFA2DB 100%);
+        border-radius: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Configuration
-SEIZURE_THRESHOLD = 0.5
-CARDIAC_CHANNELS = ['T8-P8-0', 'T8-P8-1', 'T8-P8', 'P8-O2', 'ECG', 'EKG']
-SEGMENT_DURATION_SECS = 120
-
-# Load Model with Graceful Error Handling
-@st.cache_resource
-def load_model_and_scaler():
-    try:
-        model = joblib.load("neuroalert_final_model_v7.pkl")
-        scaler = joblib.load("neuroalert_final_scaler_v6.pkl")
-        return model, scaler, None
-    except:
-        try:
-            model = joblib.load("models_v6_ecg/neuroalert_ecg_final.pkl")
-            scaler = joblib.load("models_v6_ecg/neuroalert_ecg_scaler.pkl")
-            return model, scaler, None
-        except Exception as e:
-            return None, None, str(e)
-
-def find_cardiac_channel(channel_list):
-    for ch in channel_list:
-        if 'ECG' in ch.upper() or 'EKG' in ch.upper():
-            return ch
-    for ch in CARDIAC_CHANNELS:
-        if ch in channel_list:
-            return ch
-    return None
-
-def safe_divide(a, b, default=0.0):
-    try:
-        result = float(a) / float(b) if b != 0 else default
-        return result if not (np.isnan(result) or np.isinf(result)) else default
-    except:
-        return default
-
-def validate_value(value, min_val=-1e6, max_val=1e6):
-    if value is None or np.isnan(value) or np.isinf(value):
-        return 0.0
-    if value < min_val or value > max_val:
-        return 0.0
-    return float(value)
-
-def extract_hrv_features(raw_signal, sfreq):
-    """Extract 24 HRV features (matching the scaler's expectation)."""
-    try:
-        cleaned_signal = nk.ecg_clean(raw_signal, sampling_rate=sfreq, method="neurokit")
-        _, rpeaks_info = nk.ecg_peaks(cleaned_signal, sampling_rate=sfreq, method="pantompkins1985", correct_artifacts=True)
-        
-        if len(rpeaks_info['ECG_R_Peaks']) < 20:
-            return None, None
-        
-        hrv_features = nk.hrv(rpeaks_info, sampling_rate=sfreq, show=False)
-        ecg_rate = nk.ecg_rate(rpeaks_info, sampling_rate=sfreq)
-        rr_intervals = np.diff(rpeaks_info['ECG_R_Peaks']) / sfreq * 1000
-        
-        # Extract exactly 24 features (no VLF_norm to match original training)
-        features_dict = {
-            'HR': validate_value(np.mean(ecg_rate), 30, 250),
-            'HR_std': validate_value(np.std(ecg_rate), 0, 100),
-            'MeanNN': validate_value(np.mean(rr_intervals), 200, 2000),
-            'SDNN': validate_value(np.std(rr_intervals), 0, 500),
-            'RMSSD': validate_value(hrv_features['HRV_RMSSD'].iloc[0], 0, 500),
-            'pNN50': validate_value(hrv_features['HRV_pNN50'].iloc[0], 0, 100),
-            'SDSD': validate_value(np.std(np.diff(rr_intervals)), 0, 500),
-            'VLF_power': validate_value(hrv_features.get('HRV_VLF', pd.Series([0])).iloc[0], 0, 1e6),
-            'LF_power': validate_value(hrv_features.get('HRV_LF', pd.Series([0])).iloc[0], 0, 1e6),
-            'HF_power': validate_value(hrv_features.get('HRV_HF', pd.Series([0])).iloc[0], 0, 1e6),
-            'Total_power': validate_value(hrv_features.get('HRV_TP', pd.Series([0])).iloc[0], 0, 1e6),
-            'LF_HF_ratio': validate_value(hrv_features['HRV_LFHF'].iloc[0], 0, 10),
-            'LF_norm': safe_divide(hrv_features.get('HRV_LFn', pd.Series([0])).iloc[0], 1, 0.0) * 100,
-            'HF_norm': safe_divide(hrv_features.get('HRV_HFn', pd.Series([0])).iloc[0], 1, 0.0) * 100,
-            'SampEn': validate_value(hrv_features['HRV_SampEn'].iloc[0], 0, 3),
-            'SD1': validate_value(hrv_features['HRV_SD1'].iloc[0], 0, 500),
-            'SD2': validate_value(hrv_features['HRV_SD2'].iloc[0], 0, 500),
-            'SD1_SD2_ratio': safe_divide(hrv_features['HRV_SD1'].iloc[0], hrv_features['HRV_SD2'].iloc[0], 1.0),
-            'RR_CV': safe_divide(np.std(rr_intervals), np.mean(rr_intervals), 0.0),
-            'R_peak_count': validate_value(len(rpeaks_info['ECG_R_Peaks']), 10, 300),
-            'HR_accel': validate_value(np.mean(np.diff(ecg_rate)) if len(ecg_rate) > 1 else 0, -50, 50),
-            'HR_accel_std': validate_value(np.std(np.diff(ecg_rate)) if len(ecg_rate) > 1 else 0, 0, 50),
-            'pNN20': validate_value((np.sum(np.abs(np.diff(rr_intervals)) > 20) / len(np.diff(rr_intervals)) * 100) if len(rr_intervals) > 1 else 0, 0, 100),
-            'TINN': validate_value(hrv_features.get('HRV_TINN', pd.Series([0])).iloc[0], 0, 1000),
-        }
-        
-        # Ensure no NaN/Inf
-        for key in features_dict:
-            if np.isnan(features_dict[key]) or np.isinf(features_dict[key]):
-                features_dict[key] = 0.0
-        
-        return pd.DataFrame(features_dict, index=[0]), cleaned_signal
-    except Exception as e:
-        # Return dummy features if extraction fails
-        dummy_features = {f'feature_{i}': 0.0 for i in range(24)}
-        return pd.DataFrame(dummy_features, index=[0]), raw_signal[:len(raw_signal)]
-
-def create_risk_gauge(probability):
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number", value=probability * 100, domain={'x': [0, 1], 'y': [0, 1]},
-        title={'text': "Seizure Risk", 'font': {'size': 24, 'color': '#ffffff'}},
-        number={'suffix': "%", 'font': {'size': 48, 'color': '#ffffff'}},
-        gauge={
-            'axis': {'range': [None, 100], 'tickwidth': 2, 'tickcolor': "#a0a0a0"},
-            'bar': {'color': "#dc2626" if probability >= SEIZURE_THRESHOLD else "#22c55e", 'thickness': 0.75},
-            'bgcolor': "rgba(0,0,0,0.5)", 'borderwidth': 3, 'bordercolor': "#4a90e2",
-            'steps': [
-                {'range': [0, 25], 'color': 'rgba(34, 197, 94, 0.3)'},
-                {'range': [25, 50], 'color': 'rgba(234, 179, 8, 0.3)'},
-                {'range': [50, 75], 'color': 'rgba(249, 115, 22, 0.3)'},
-                {'range': [75, 100], 'color': 'rgba(220, 38, 38, 0.3)'}
-            ],
-            'threshold': {'line': {'color': "#ffffff", 'width': 4}, 'thickness': 0.85, 'value': SEIZURE_THRESHOLD * 100}
-        }
-    ))
-    fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font={'color': "#ffffff"}, height=350)
-    return fig
-
-def create_hrv_radar(features_df):
-    features = ['HR', 'SDNN', 'RMSSD', 'pNN50', 'LF_HF_ratio', 'SampEn']
-    values = [features_df[f].values[0] if f in features_df.columns else 0 for f in features]
-    normalized = [(v - min(values)) / (max(values) - min(values)) * 100 if max(values) != min(values) else 50 for v in values]
-    
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(
-        r=normalized + [normalized[0]], theta=features + [features[0]],
-        fill='toself', fillcolor='rgba(74, 144, 226, 0.5)', line=dict(color='#4a90e2', width=3)
-    ))
-    fig.update_layout(
-        polar=dict(
-            radialaxis=dict(visible=True, range=[0, 100], gridcolor='rgba(255, 255, 255, 0.2)', tickfont=dict(color='#ffffff')),
-            angularaxis=dict(gridcolor='rgba(255, 255, 255, 0.2)', tickfont=dict(color='#ffffff')),
-            bgcolor='rgba(0,0,0,0)'
-        ),
-        showlegend=False, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=350
-    )
-    return fig
-
-# Main App
-
-# Header
+# ============================================================================
+# MAIN TITLE
+# ============================================================================
 st.markdown("""
-<div class="main-header">
-    <h1>🧠 NeuroAlert</h1>
-    <p>AI-Powered Seizure Prediction System | 30-Minute Early Warning</p>
+<div class='main-title'>
+    <h1>🧠 NEUROALERT</h1>
+    <p>AI-Powered Seizure Risk Prediction from ECG Signals</p>
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def butter_bandpass(lowcut, highcut, fs, order=5):
+    """Butterworth bandpass filter"""
+    nyq = 0.5 * fs
+    low = lowcut / nyq
+    high = highcut / nyq
+    sos = butter(order, [low, high], btype='band', output='sos')
+    return sos
+
+def bandpass_filter(data, lowcut, highcut, fs, order=5):
+    """Apply bandpass filter"""
+    sos = butter_bandpass(lowcut, highcut, fs, order=order)
+    y = sosfilt(sos, data)
+    return y
+
+def resample_signal(signal, original_fs, target_fs=256):
+    """
+    Resample signal to target frequency
+    SIENA files: 512 Hz → CHB-MIT standard: 256 Hz
+    """
+    if original_fs == target_fs:
+        return signal, original_fs
+    
+    # Calculate resampling ratio
+    num_samples = int(len(signal) * target_fs / original_fs)
+    
+    # Resample using scipy
+    from scipy import signal as sp_signal
+    resampled = sp_signal.resample(signal, num_samples)
+    
+    return resampled, target_fs
+
+def extract_comprehensive_hrv_features(ecg_signal, fs=250):
+    """
+    Extract comprehensive HRV biomarkers for medical analysis
+    Returns: features array and detailed metrics dictionary
+    """
+    ecg_signal = np.array(ecg_signal).flatten()
+    
+    # Filter the signal (0.5-40 Hz for ECG)
+    filtered_ecg = bandpass_filter(ecg_signal, 0.5, 40, fs, order=5)
+    
+    # Detect R-peaks
+    peaks, properties = find_peaks(
+        filtered_ecg,
+        height=np.mean(filtered_ecg) + 0.5 * np.std(filtered_ecg),
+        distance=int(0.6 * fs)
+    )
+    
+    features = []
+    metrics = {}
+    
+    if len(peaks) > 2:
+        # RR intervals (in ms)
+        rr_intervals = np.diff(peaks) / fs * 1000
+        
+        # ========== TIME DOMAIN HRV FEATURES ==========
+        mean_rr = np.mean(rr_intervals)
+        sdnn = np.std(rr_intervals)  # Standard deviation of NN intervals
+        rmssd = np.sqrt(np.mean(np.diff(rr_intervals)**2))  # Root mean square of successive differences
+        sdsd = np.std(np.diff(rr_intervals))  # Standard deviation of successive differences
+        nn50 = np.sum(np.abs(np.diff(rr_intervals)) > 50)  # Number of pairs differing by >50ms
+        pnn50 = (nn50 / len(rr_intervals)) * 100 if len(rr_intervals) > 0 else 0  # Percentage of NN50
+        
+        # Additional time domain metrics
+        rr_range = np.max(rr_intervals) - np.min(rr_intervals)
+        cv_rr = (sdnn / mean_rr) * 100 if mean_rr > 0 else 0  # Coefficient of variation
+        median_rr = np.median(rr_intervals)
+        mad_rr = np.median(np.abs(rr_intervals - median_rr))  # Median absolute deviation
+        
+        # Heart Rate metrics
+        mean_hr = 60000 / mean_rr if mean_rr > 0 else 0
+        min_hr = 60000 / np.max(rr_intervals) if np.max(rr_intervals) > 0 else 0
+        max_hr = 60000 / np.min(rr_intervals) if np.min(rr_intervals) > 0 else 0
+        
+        # Store time domain metrics
+        metrics['Time Domain'] = {
+            'Mean RR (ms)': mean_rr,
+            'SDNN (ms)': sdnn,
+            'RMSSD (ms)': rmssd,
+            'SDSD (ms)': sdsd,
+            'NN50 (count)': nn50,
+            'pNN50 (%)': pnn50,
+            'RR Range (ms)': rr_range,
+            'CV (%)': cv_rr,
+            'Median RR (ms)': median_rr,
+            'MAD (ms)': mad_rr,
+            'Mean HR (bpm)': mean_hr,
+            'Min HR (bpm)': min_hr,
+            'Max HR (bpm)': max_hr,
+        }
+        
+        # Add to features array
+        features.extend([mean_rr, sdnn, rmssd, sdsd, pnn50, mean_hr])
+        
+        # ========== FREQUENCY DOMAIN HRV FEATURES ==========
+        if len(rr_intervals) > 10:
+            # Resample RR intervals to uniform time series
+            time_rr = np.cumsum(rr_intervals) / 1000  # Convert to seconds
+            
+            # Ensure we have enough time points for frequency analysis
+            if time_rr[-1] < 30:  # Less than 30 seconds of RR data
+                # Not enough data for reliable frequency analysis
+                metrics['Frequency Domain'] = {
+                    'VLF Power (ms²)': 0,
+                    'LF Power (ms²)': 0,
+                    'HF Power (ms²)': 0,
+                    'Total Power (ms²)': 0,
+                    'LF norm (%)': 0,
+                    'HF norm (%)': 0,
+                    'LF/HF Ratio': 0,
+                }
+                features.extend([0, 0, 0])
+            else:
+                # Uniform sampling at 4 Hz
+                time_uniform = np.arange(0, time_rr[-1], 0.25)
+                
+                # Need at least 8 points for frequency analysis
+                if len(time_uniform) < 8:
+                    metrics['Frequency Domain'] = {
+                        'VLF Power (ms²)': 0,
+                        'LF Power (ms²)': 0,
+                        'HF Power (ms²)': 0,
+                        'Total Power (ms²)': 0,
+                        'LF norm (%)': 0,
+                        'HF norm (%)': 0,
+                        'LF/HF Ratio': 0,
+                    }
+                    features.extend([0, 0, 0])
+                else:
+                    rr_uniform = np.interp(time_uniform, time_rr, rr_intervals)
+                    
+                    # Compute power spectral density with appropriate nperseg
+                    nperseg_val = min(256, len(rr_uniform) // 2)
+                    if nperseg_val < 4:
+                        nperseg_val = min(len(rr_uniform), 4)
+                    
+                    freqs, psd = signal.welch(rr_uniform, fs=4, nperseg=nperseg_val)
+                    
+                    # Frequency bands (Hz)
+                    vlf_band = (freqs >= 0.003) & (freqs < 0.04)   # Very Low Frequency
+                    lf_band = (freqs >= 0.04) & (freqs < 0.15)     # Low Frequency
+                    hf_band = (freqs >= 0.15) & (freqs < 0.4)      # High Frequency
+                    
+                    # Power in each band (ms²)
+                    vlf_power = np.trapz(psd[vlf_band], freqs[vlf_band]) if np.any(vlf_band) else 0
+                    lf_power = np.trapz(psd[lf_band], freqs[lf_band]) if np.any(lf_band) else 0
+                    hf_power = np.trapz(psd[hf_band], freqs[hf_band]) if np.any(hf_band) else 0
+                    total_power = vlf_power + lf_power + hf_power
+                    
+                    # Normalized power
+                    lf_norm = (lf_power / (lf_power + hf_power)) * 100 if (lf_power + hf_power) > 0 else 0
+                    hf_norm = (hf_power / (lf_power + hf_power)) * 100 if (lf_power + hf_power) > 0 else 0
+                    
+                    # LF/HF ratio (autonomic balance)
+                    lf_hf_ratio = lf_power / hf_power if hf_power > 0 else 0
+                    
+                    metrics['Frequency Domain'] = {
+                        'VLF Power (ms²)': vlf_power,
+                        'LF Power (ms²)': lf_power,
+                        'HF Power (ms²)': hf_power,
+                        'Total Power (ms²)': total_power,
+                        'LF norm (%)': lf_norm,
+                        'HF norm (%)': hf_norm,
+                        'LF/HF Ratio': lf_hf_ratio,
+                    }
+                    
+                    features.extend([lf_power, hf_power, lf_hf_ratio])
+        else:
+            metrics['Frequency Domain'] = {
+                'VLF Power (ms²)': 0,
+                'LF Power (ms²)': 0,
+                'HF Power (ms²)': 0,
+                'Total Power (ms²)': 0,
+                'LF norm (%)': 0,
+                'HF norm (%)': 0,
+                'LF/HF Ratio': 0,
+            }
+            features.extend([0, 0, 0])
+        
+        # ========== NONLINEAR HRV FEATURES ==========
+        # SD1 and SD2 (Poincaré plot)
+        sd1 = np.sqrt(0.5 * rmssd**2)
+        sd2 = np.sqrt(2 * sdnn**2 - 0.5 * rmssd**2)
+        sd_ratio = sd1 / sd2 if sd2 > 0 else 0
+        
+        metrics['Nonlinear'] = {
+            'SD1 (ms)': sd1,
+            'SD2 (ms)': sd2,
+            'SD1/SD2 Ratio': sd_ratio,
+        }
+        
+        # ========== SIGNAL QUALITY METRICS ==========
+        signal_std = np.std(filtered_ecg)
+        signal_max = np.max(np.abs(filtered_ecg))
+        signal_mad = np.mean(np.abs(np.diff(filtered_ecg)))
+        
+        metrics['Signal Quality'] = {
+            'Signal Std (mV)': signal_std,
+            'Peak Amplitude (mV)': signal_max,
+            'Mean Derivative': signal_mad,
+            'R-peaks Detected': len(peaks),
+        }
+        
+        features.extend([signal_std, signal_max, signal_mad, len(peaks)])
+        
+        # Additional features for model
+        features.extend([rr_range, median_rr])
+        
+    else:
+        # Not enough peaks - return zeros
+        features = [0] * 15
+        metrics = {
+            'Time Domain': {'Error': 'Insufficient R-peaks detected'},
+            'Frequency Domain': {'Error': 'Insufficient data'},
+            'Nonlinear': {'Error': 'Insufficient data'},
+            'Signal Quality': {'R-peaks Detected': len(peaks)}
+        }
+    
+    return np.array(features), metrics, filtered_ecg, peaks
+
+def create_speedometer(value, title="Risk Level"):
+    """Create speedometer gauge"""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=value,
+        domain={'x': [0, 1], 'y': [0, 1]},
+        title={'text': title, 'font': {'size': 24, 'color': '#5B2E90', 'family': 'Arial Black'}},
+        number={'font': {'size': 50, 'color': '#5B2E90', 'family': 'Arial Black'}},
+        gauge={
+            'axis': {'range': [None, 100], 'tickwidth': 2, 'tickcolor': '#5B2E90'},
+            'bar': {'color': "#5B2E90", 'thickness': 0.75},
+            'bgcolor': "white",
+            'borderwidth': 3,
+            'bordercolor': "#BFA2DB",
+            'steps': [
+                {'range': [0, 30], 'color': '#ffcccc'},
+                {'range': [30, 70], 'color': '#fff4cc'},
+                {'range': [70, 100], 'color': '#ccffcc'}
+            ],
+            'threshold': {
+                'line': {'color': "#ff4757", 'width': 4},
+                'thickness': 0.75,
+                'value': 50
+            }
+        }
+    ))
+    
+    fig.update_layout(
+        height=300,
+        margin=dict(l=20, r=20, t=80, b=20),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font={'color': '#5B2E90', 'family': 'Arial'}
+    )
+    
+    return fig
+
+def create_ecg_plot(ecg_data, fs, peaks=None):
+    """Create interactive ECG plot with R-peaks"""
+    time = np.arange(len(ecg_data)) / fs
+    
+    fig = go.Figure()
+    
+    # ECG trace
+    fig.add_trace(go.Scatter(
+        x=time,
+        y=ecg_data,
+        mode='lines',
+        name='ECG Signal',
+        line=dict(color='#5B2E90', width=2),
+        hovertemplate='Time: %{x:.2f}s<br>Amplitude: %{y:.3f} mV<extra></extra>'
+    ))
+    
+    # Add R-peaks if provided
+    if peaks is not None and len(peaks) > 0:
+        fig.add_trace(go.Scatter(
+            x=time[peaks],
+            y=ecg_data[peaks],
+            mode='markers',
+            name='R-peaks',
+            marker=dict(color='#ff4757', size=10, symbol='diamond'),
+            hovertemplate='R-peak<br>Time: %{x:.2f}s<extra></extra>'
+        ))
+    
+    fig.update_layout(
+        title=dict(text='📈 ECG Signal with R-peak Detection', font=dict(size=24, color='#5B2E90', family='Arial Black')),
+        xaxis_title="Time (seconds)",
+        yaxis_title="Amplitude (mV)",
+        hovermode='x unified',
+        height=500,
+        plot_bgcolor='rgba(247, 244, 251, 0.5)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='#5B2E90', family='Arial'),
+        xaxis=dict(gridcolor='rgba(191, 162, 219, 0.3)', showgrid=True),
+        yaxis=dict(gridcolor='rgba(191, 162, 219, 0.3)', showgrid=True),
+        legend=dict(
+            bgcolor='rgba(255, 255, 255, 0.9)',
+            bordercolor='#BFA2DB',
+            borderwidth=2
+        )
+    )
+    
+    return fig
+
+def read_edf_file(uploaded_file):
+    """Read EDF file and extract ECG channel with robust temp file handling"""
+    if not EDF_SUPPORT:
+        st.error("⚠️ MNE library not installed. Install with: pip install mne")
+        return None, None, None
+    
+    import tempfile
+    import os
+    
+    tmp_path = None
+    try:
+        # Create temporary file with guaranteed cleanup
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.edf') as tmp:
+            tmp.write(uploaded_file.getbuffer())
+            tmp_path = tmp.name
+        
+        # Read EDF file
+        raw = mne.io.read_raw_edf(tmp_path, preload=True, verbose=False)
+        
+        # Get sampling frequency
+        fs = raw.info['sfreq']
+        
+        # Get channel names
+        channels = raw.ch_names
+        
+        # Try to find ECG channel
+        ecg_channel = None
+        ecg_keywords = ['ECG', 'EKG', 'CARDIO', 'HEART']
+        
+        for ch in channels:
+            if any(keyword in ch.upper() for keyword in ecg_keywords):
+                ecg_channel = ch
+                break
+        
+        # If no ECG channel found, use first channel
+        if ecg_channel is None:
+            ecg_channel = channels[0]
+            st.warning(f"⚠️ No ECG channel detected. Using first channel: {ecg_channel}")
+        
+        # Extract ECG data
+        ecg_data = raw.get_data(picks=[ecg_channel])[0]
+        
+        return ecg_data, fs, channels
+        
+    except Exception as e:
+        st.error(f"⚠️ Error reading EDF file: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
+        return None, None, None
+        
+    finally:
+        # Guaranteed cleanup of temp file
+        if tmp_path is not None and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception as e:
+                st.warning(f"Could not delete temporary file: {e}")
+
+# ============================================================================
+# LOAD MODEL AND SCALER
+# ============================================================================
+@st.cache_resource
+def load_model_and_scaler():
+    """Load the trained seizure prediction model and scaler"""
+    model = None
+    scaler = None
+    
+    try:
+        with open('nueroalert_hybrid_ecg_only.pkl', 'rb') as f:
+            model = pickle.load(f)
+    except FileNotFoundError:
+        try:
+            with open('neuroalert_hybrid_ecg_only.pkl', 'rb') as f:
+                model = pickle.load(f)
+        except FileNotFoundError:
+            st.error("⚠️ Model file not found. Please ensure model .pkl file is in the same directory.")
+    
+    try:
+        with open('scaler.pkl', 'rb') as f:
+            scaler = pickle.load(f)
+            st.sidebar.success("✅ Scaler loaded - predictions will be accurate!")
+    except FileNotFoundError:
+        st.sidebar.warning("⚠️ Scaler not found. Predictions may be less accurate.")
+    
+    return model, scaler
+
+model, scaler = load_model_and_scaler()
+
+# ============================================================================
+# SESSION STATE FOR TEMPORAL SMOOTHING
+# ============================================================================
+if 'prediction_history' not in st.session_state:
+    st.session_state.prediction_history = []
+
+if 'probability_history' not in st.session_state:
+    st.session_state.probability_history = []
+
+# ============================================================================
+# SIDEBAR
+# ============================================================================
 with st.sidebar:
-    st.markdown("### ⚙️ System Configuration")
+    st.markdown("### ⚙️ Analysis Settings")
     st.markdown("---")
     
-    st.markdown("#### 🤖 Model Information")
-    st.metric("Model Version", "v6.0 ECG")
-    st.metric("Alert Threshold", "50%")
-    st.metric("Warning Window", "30 min")
+    # Segment duration slider
+    segment_duration = st.select_slider(
+        "Analysis Window Size",
+        options=[30, 60, 90, 120, 150, 180],
+        value=120,
+        help="Duration of ECG segment to analyze (seconds). Use 120s if model trained on 2-min windows."
+    )
+    
+    st.info(f"📏 Analyzing **{segment_duration}s** ({segment_duration//60}min {segment_duration%60}s) windows")
+    
+    # Window start position
+    window_start = st.number_input(
+        "Window Start Position (minutes)",
+        min_value=0,
+        max_value=60,
+        value=0,
+        step=1,
+        help="Where to start analyzing in the recording (0 = beginning). Change this if seizure occurs later in file."
+    )
+    
+    st.info(f"⏱️ Starting analysis at **{window_start}** minute(s)")
+    
+    with st.expander("ℹ️ Why adjust start position?"):
+        st.markdown("""
+        **Critical for seizure detection:**
+        
+        - If seizure occurs 20 minutes into recording, analyzing first 2 minutes won't detect it!
+        - Check your seizure timestamp file
+        - Set window start to just before seizure time
+        
+        **Example:** PN00-2.edf
+        - Recording starts: 02:18:17
+        - Seizure starts: 02:38:37 (20 min later)
+        - Set window start to **18-20 minutes**
+        
+        **Default (0 min):** Analyzes from beginning
+        """)
+    
+    with st.expander("ℹ️ Why 120s default?"):
+        st.markdown("""
+        **Window Duration Guidelines:**
+        
+        - **120s (2 min):** Standard for HRV analysis, recommended if model trained on 2-min windows
+        - **60s (1 min):** Faster analysis, less stable HRV metrics
+        - **180s (3 min):** More stable, but slower
+        
+        **Important:** Use the same duration your model was trained on!
+        
+        If predictions seem random, try adjusting this setting.
+        """)
     
     st.markdown("---")
-    st.markdown("#### 📊 Performance")
-    st.metric("Sensitivity", "28%", help="Phase 1 (CHB-MIT)")
-    st.metric("Features", "24", help="HRV Biomarkers")
+    st.markdown("### 🎯 Prediction Settings")
+    
+    # Confidence threshold slider
+    confidence_threshold = st.slider(
+        "Confidence Threshold",
+        min_value=0.5,
+        max_value=0.8,
+        value=0.65,
+        step=0.05,
+        help="Higher threshold = fewer false alarms, but may miss some events"
+    )
+    
+    st.info(f"🎯 Current threshold: **{confidence_threshold:.0%}**")
+    
+    # Temporal smoothing settings
+    st.markdown("### 🔄 Temporal Smoothing")
+    
+    enable_smoothing = st.checkbox(
+        "Enable Temporal Smoothing",
+        value=True,
+        help="Require multiple consecutive positive predictions to reduce false alarms"
+    )
+    
+    if enable_smoothing:
+        window_size = st.select_slider(
+            "History Window Size",
+            options=[2, 3, 4, 5],
+            value=3,
+            help="Number of recent predictions to consider"
+        )
+        
+        required_positive = st.select_slider(
+            "Required Positive Count",
+            options=list(range(1, window_size + 1)),
+            value=2,
+            help="Minimum positive predictions needed to trigger alert"
+        )
+        
+        st.info(f"📊 Alert if **{required_positive}/{window_size}** windows are positive")
     
     st.markdown("---")
-    st.markdown("#### ℹ️ About")
-    st.info("NeuroAlert analyzes heart rate variability from ECG signals to predict epileptic seizures 30 minutes in advance.")
+    st.markdown("### 📊 About NeuroAlert")
+    st.markdown("""
+    **NeuroAlert** uses AI to predict seizure risk from ECG patterns.
+    
+    **Model Performance:**
+    - Sensitivity: 40%
+    - Specificity: 72%
+    - Model: v12 Hybrid
+    
+    **Analyzed Biomarkers:**
+    - Time Domain HRV
+    - Frequency Domain HRV
+    - Nonlinear Metrics
+    - Signal Quality
+    """)
     
     st.markdown("---")
-    st.markdown("#### 🚀 Phase 2")
-    st.warning("**Siena Training**\n\nExpected: 70-75% sensitivity\n\nStatus: In Progress")
+    
+    st.markdown("### ⚠️ Important Limitations")
+    with st.expander("🧠 EEG vs ECG Reality Check"):
+        st.markdown("""
+        **Critical Understanding:**
+        
+        🧠 **Seizures = Brain (EEG) Events**
+        - Occur in EEG channels (Fp1, F3, C3, etc.)
+        - Measured by brain electrical activity
+        
+        ❤️ **This App = Heart (ECG) Analysis**
+        - Analyzes EKG/ECG channels only
+        - Measures heart rate variability
+        
+        **⚠️ The Problem:**
+        Not all brain seizures cause detectable heart changes!
+        
+        - Some seizures: Clear HR/HRV changes ✅
+        - Many seizures: No ECG signature ❌
+        
+        **What this means:**
+        - If model says LOW RISK but EEG shows seizure → ECG didn't see it (no cardiac signature)
+        - This is a fundamental limitation of ECG-based detection
+        - For full seizure detection, EEG analysis needed
+        
+        **Use case:** ECG best for seizures with cardiac manifestations
+        """)
+    
+    st.markdown("---")
+    st.warning("⚠️ **Medical Disclaimer:** For research and educational purposes only. Not for clinical diagnosis.")
 
-# Load Model
-model, scaler, error = load_model_and_scaler()
+# ============================================================================
+# MAIN CONTENT
+# ============================================================================
 
-# File Upload Section (FUNCTIONAL - TOP PRIORITY)
+# File Upload Section - Prominent on main page
 st.markdown("""
-<div style="
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-    border: 2px solid rgba(74, 144, 226, 0.3);
-    border-radius: 20px;
-    padding: 2rem;
-    margin: 2rem 0;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-">
-    <h2 style="color: #4a90e2; text-align: center; margin-bottom: 0.5rem; font-size: 2rem;">
-        📁 Upload EDF File
-    </h2>
-    <p style="color: #b0c4de; text-align: center; margin-bottom: 1rem; font-size: 1.1rem;">
-        Drop your EDF file below or click to browse
+<div class='glow-card' style='text-align: center;'>
+    <h2 style='color: #5B2E90; margin: 0 0 10px 0;'>📂 Upload Your ECG Data</h2>
+    <p style='color: #3D1B5C; font-size: 1.1rem; margin: 0 0 20px 0;'>
+        Upload an EDF file containing ECG recording to begin analysis
     </p>
 </div>
 """, unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("Choose an EDF file", type=['edf'], key="edf_uploader")
+# File uploader with custom styling
+uploaded_file = st.file_uploader(
+    "Choose EDF file",
+    type=['edf'],
+    help="Upload an EDF file containing ECG signal recording",
+    label_visibility="collapsed"
+)
 
-analyze_full = st.checkbox("🔬 Enable Comprehensive Analysis Mode", help="Analyze entire file segment-by-segment")
+if uploaded_file is not None:
+    st.success(f"✅ **File uploaded successfully!** - {uploaded_file.name}")
 
-if uploaded_file:
-    tmp_file_path = None
-    try:
-        with st.spinner("Processing EDF file..."):
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.edf') as tmp_file:
-                tmp_file.write(uploaded_file.getvalue())
-                tmp_file_path = tmp_file.name
-            
-            raw = mne.io.read_raw_edf(tmp_file_path, preload=True, verbose='error')
-            cardiac_channel = find_cardiac_channel(raw.info['ch_names'])
-            
-            if not cardiac_channel:
-                st.markdown("""
-                <div class="alert-warning">
-                    <h3 style="margin:0;">⚠️ No Cardiac Channel Detected</h3>
-                    <p style="margin:0.5rem 0 0 0;">Unable to find ECG/cardiac channels. Using first available channel as fallback.</p>
-                </div>
-                """, unsafe_allow_html=True)
-                # Use first channel as fallback
-                cardiac_channel = raw.info['ch_names'][0]
-            
-            st.success(f"✅ File loaded! Using channel: **{cardiac_channel}**")
-            
-            sfreq = int(raw.info['sfreq'])
-            signal_data = raw.get_data(picks=[cardiac_channel])[0]
-            segment_samples = SEGMENT_DURATION_SECS * sfreq
-            
-            if len(signal_data) < segment_samples:
-                st.markdown("""
-                <div class="alert-warning">
-                    <h3>⚠️ File Too Short</h3>
-                    <p>Recording must be at least 2 minutes long. Analyzing available data...</p>
-                </div>
-                """, unsafe_allow_html=True)
-                segment_samples = len(signal_data)
-            
-            if not analyze_full:
-                # QUICK ANALYSIS
-                st.markdown("---")
-                st.markdown("## 📊 Analysis Results")
-                
-                segment = signal_data[-segment_samples:] if len(signal_data) >= segment_samples else signal_data
-                features_df, cleaned_signal = extract_hrv_features(segment, sfreq)
-                
-                if features_df is not None and model and scaler:
-                    try:
-                        # Handle feature mismatch gracefully
-                        expected_features = scaler.n_features_in_ if hasattr(scaler, 'n_features_in_') else 24
-                        current_features = len(features_df.columns)
-                        
-                        if current_features != expected_features:
-                            # Pad or trim features
-                            if current_features < expected_features:
-                                for i in range(expected_features - current_features):
-                                    features_df[f'padding_{i}'] = 0.0
-                            else:
-                                features_df = features_df.iloc[:, :expected_features]
-                        
-                        import xgboost as xgb
-                        features_scaled = scaler.transform(features_df)
-                        dmatrix = xgb.DMatrix(features_scaled)
-                        prob = float(model.predict(dmatrix)[0])
-                        pred = 1 if prob >= SEIZURE_THRESHOLD else 0
-                        
-                        col1, col2, col3 = st.columns([1, 1, 1])
-                        
-                        with col1:
-                            st.plotly_chart(create_risk_gauge(prob), use_container_width=True)
-                        
-                        with col2:
-                            if pred == 1:
-                                st.markdown("""
-                                <div class="alert-danger">
-                                    <h2 style="margin:0;">⚠️ HIGH RISK</h2>
-                                    <h3 style="margin:0.5rem 0 0 0;">Pre-Seizure Activity Detected</h3>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            else:
-                                st.markdown("""
-                                <div class="alert-success">
-                                    <h2 style="margin:0;">✅ NORMAL</h2>
-                                    <h3 style="margin:0.5rem 0 0 0;">Stable Cardiovascular State</h3>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            
-                            st.metric("Risk Probability", f"{prob*100:.1f}%", help=f"Threshold: {SEIZURE_THRESHOLD*100:.0f}%")
-                        
-                        with col3:
-                            st.plotly_chart(create_hrv_radar(features_df), use_container_width=True)
-                        
-                        with st.expander("🔬 View Detailed Biomarkers"):
-                            st.dataframe(features_df.T, use_container_width=True)
-                        
-                        with st.expander("📈 View ECG Signal"):
-                            time_axis = np.linspace(0, len(cleaned_signal)/sfreq, len(cleaned_signal))
-                            
-                            fig = go.Figure()
-                            fig.add_trace(go.Scatter(
-                                x=time_axis, y=cleaned_signal, mode='lines',
-                                name='ECG Signal', line=dict(color='#4a90e2', width=1)
-                            ))
-                            
-                            fig.update_layout(
-                                title="Cleaned ECG Signal",
-                                xaxis_title="Time (seconds)",
-                                yaxis_title="Amplitude (µV)",
-                                template="plotly_dark",
-                                height=350,
-                                paper_bgcolor='rgba(0,0,0,0)',
-                                plot_bgcolor='rgba(26, 26, 46, 0.5)'
-                            )
-                            
-                            st.plotly_chart(fig, use_container_width=True)
-                    
-                    except Exception as e:
-                        st.markdown(f"""
-                        <div class="alert-warning">
-                            <h3>⚠️ Partial Analysis</h3>
-                            <p>Analysis completed with limitations: {str(e)}</p>
-                            <p>Results may not be fully accurate. Consider re-uploading the file.</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                else:
-                    st.markdown("""
-                    <div class="alert-warning">
-                        <h3>⚠️ Analysis Limited</h3>
-                        <p>Feature extraction encountered issues. Showing basic analysis.</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            else:
-                # FULL FILE ANALYSIS
-                st.markdown("---")
-                st.markdown("## 📊 Comprehensive Analysis")
-                
-                st.info(f"Analyzing file in {SEGMENT_DURATION_SECS}-second segments...")
-                
-                results = []
-                progress = st.progress(0)
-                total_segments = max(1, len(signal_data) // segment_samples)
-                
-                for idx in range(total_segments):
-                    i = idx * segment_samples
-                    segment = signal_data[i : min(i + segment_samples, len(signal_data))]
-                    
-                    if len(segment) < segment_samples // 2:
-                        continue
-                    
-                    features_df, _ = extract_hrv_features(segment, sfreq)
-                    time_stamp = str(datetime.timedelta(seconds=int(i / sfreq)))
-                    
-                    if features_df is not None and model and scaler:
-                        try:
-                            expected_features = scaler.n_features_in_ if hasattr(scaler, 'n_features_in_') else 24
-                            current_features = len(features_df.columns)
-                            
-                            if current_features != expected_features:
-                                if current_features < expected_features:
-                                    for j in range(expected_features - current_features):
-                                        features_df[f'padding_{j}'] = 0.0
-                                else:
-                                    features_df = features_df.iloc[:, :expected_features]
-                            
-                            import xgboost as xgb
-                            prob = float(model.predict(xgb.DMatrix(scaler.transform(features_df)))[0])
-                            pred = 1 if prob >= SEIZURE_THRESHOLD else 0
-                            
-                            if pred == 1:
-                                results.append(f"🔴 {time_stamp}: HIGH RISK ({prob:.1%})")
-                            else:
-                                results.append(f"🟢 {time_stamp}: Normal ({prob:.1%})")
-                        except:
-                            results.append(f"🟡 {time_stamp}: Analysis incomplete")
-                    else:
-                        results.append(f"🟡 {time_stamp}: Feature extraction failed")
-                    
-                    progress.progress((idx + 1) / total_segments)
-                
-                progress.empty()
-                
-                with st.expander("📋 Full Analysis Log"):
-                    st.text_area("", "\n".join(results), height=400, label_visibility="collapsed")
+st.markdown("<br>", unsafe_allow_html=True)
+
+if uploaded_file is None:
+    # Welcome screen
+    st.markdown("""
+    <div class='glow-card'>
+        <h2 style='color: #5B2E90; text-align: center; margin-top: 0;'>👋 Welcome to NeuroAlert</h2>
+        <p style='text-align: center; font-size: 1.2rem; color: #3D1B5C;'>
+            Upload your ECG EDF file to get AI-powered seizure risk prediction
+        </p>
+        <br>
+        <h3 style='color: #5B2E90;'>📋 How to Use:</h3>
+        <ol style='font-size: 1.1rem; line-height: 2; color: #3D1B5C;'>
+            <li><strong>Upload EDF File:</strong> Use the sidebar to upload your ECG recording</li>
+            <li><strong>Start Analysis:</strong> Click the "Start Analysis" button when ready</li>
+            <li><strong>View Results:</strong> Review comprehensive seizure risk assessment</li>
+            <li><strong>Check Biomarkers:</strong> Examine full HRV biomarker analysis</li>
+            <li><strong>Follow Guidelines:</strong> Read safety recommendations if risk detected</li>
+        </ol>
+        <br>
+        <h3 style='color: #5B2E90;'>🎯 What We Analyze:</h3>
+        <ul style='font-size: 1.1rem; line-height: 2; color: #3D1B5C;'>
+            <li><strong>Time Domain HRV:</strong> SDNN, RMSSD, pNN50, Heart Rate</li>
+            <li><strong>Frequency Domain:</strong> VLF, LF, HF power, LF/HF ratio</li>
+            <li><strong>Nonlinear Metrics:</strong> Poincaré plot (SD1, SD2)</li>
+            <li><strong>Signal Quality:</strong> R-peak detection, signal integrity</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
     
-    except Exception as e:
-        st.markdown(f"""
-        <div class="alert-danger">
-            <h3>❌ Processing Error</h3>
-            <p>{str(e)}</p>
-            <p>Please try a different file or contact support.</p>
+    # Feature cards
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("""
+        <div class='glow-card' style='text-align: center;'>
+            <h2 style='color: #5B2E90; margin: 0;'>🎯</h2>
+            <h3 style='color: #5B2E90; margin: 10px 0;'>AI Prediction</h3>
+            <p style='color: #3D1B5C;'>Advanced ML models for seizure risk</p>
         </div>
         """, unsafe_allow_html=True)
     
-    finally:
-        if tmp_file_path and os.path.exists(tmp_file_path):
-            os.remove(tmp_file_path)
+    with col2:
+        st.markdown("""
+        <div class='glow-card' style='text-align: center;'>
+            <h2 style='color: #5B2E90; margin: 0;'>⚡</h2>
+            <h3 style='color: #5B2E90; margin: 10px 0;'>Real-Time</h3>
+            <p style='color: #3D1B5C;'>Instant comprehensive analysis</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class='glow-card' style='text-align: center;'>
+            <h2 style='color: #5B2E90; margin: 0;'>🛡️</h2>
+            <h3 style='color: #5B2E90; margin: 10px 0;'>Safety First</h3>
+            <p style='color: #3D1B5C;'>Actionable safety recommendations</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-# Global Impact Section (Minimal Design)
-st.markdown("<br><br>", unsafe_allow_html=True)
-st.markdown("---")
-
-st.markdown("""
-<div class="globe-section">
-    <h2 class="globe-title">🌍 Global Impact</h2>
-    <div class="stat-grid">
-        <div class="stat-card">
-            <div class="stat-value">65M+</div>
-            <div class="stat-label">People with Epilepsy</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">30%</div>
-            <div class="stat-label">Drug-Resistant Cases</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">30min</div>
-            <div class="stat-label">Advance Warning</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">24</div>
-            <div class="stat-label">AI Biomarkers</div>
-        </div>
+else:
+    # File uploaded - show Start Analysis button
+    st.markdown("""
+    <div class='glow-card' style='text-align: center;'>
+        <h2 style='color: #5B2E90; margin: 0;'>✅ EDF File Ready for Analysis</h2>
+        <p style='color: #3D1B5C; font-size: 1.1rem; margin: 15px 0;'>
+            Click the button below to start comprehensive ECG analysis and seizure risk prediction
+        </p>
     </div>
-</div>
-""", unsafe_allow_html=True)
+    """, unsafe_allow_html=True)
+    
+    # Center the button
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        start_analysis = st.button("🚀 START ANALYSIS", use_container_width=True, type="primary")
+    
+    if start_analysis and model is not None:
+        # Analysis workflow
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        try:
+            # Step 1: Read EDF file
+            status_text.text("📂 Reading EDF file...")
+            progress_bar.progress(10)
+            
+            ecg_data, fs, channels = read_edf_file(uploaded_file)
+            
+            if ecg_data is None:
+                st.error("❌ Failed to read EDF file. Please check file format.")
+                progress_bar.empty()
+                status_text.empty()
+            else:
+                # Step 2: Process signal
+                status_text.text("🔬 Processing ECG signal...")
+                progress_bar.progress(30)
+                
+                # Calculate start sample based on user-selected start position
+                start_sample = int(window_start * 60 * fs)  # Convert minutes to samples
+                end_sample = start_sample + int(segment_duration * fs)
+                
+                # Check if requested window is within recording
+                if start_sample >= len(ecg_data):
+                    st.error(f"❌ Window start ({window_start} min) is beyond recording length!")
+                    st.info(f"💡 Recording is only {len(ecg_data)/fs/60:.1f} minutes long")
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.stop()
+                
+                if end_sample > len(ecg_data):
+                    st.warning(f"⚠️ Requested window extends beyond recording. Using available data.")
+                    end_sample = len(ecg_data)
+                
+                # Extract the window
+                ecg_data = ecg_data[start_sample:end_sample]
+                actual_duration = len(ecg_data) / fs
+                
+                # Minimum duration check
+                min_duration = 10  # seconds
+                if actual_duration < min_duration:
+                    st.error(f"❌ Window too short! Need at least {min_duration}s, got {actual_duration:.1f}s")
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.stop()
+                
+                # Check if resampling needed (SIENA files are 512 Hz, model trained on 256 Hz)
+                original_fs = fs
+                if fs > 256:
+                    status_text.text(f"🔄 Resampling from {fs} Hz to 256 Hz...")
+                    ecg_data, fs = resample_signal(ecg_data, fs, target_fs=256)
+                    st.info(f"📊 Resampled signal from {original_fs} Hz → {fs} Hz (CHB-MIT standard)")
+                
+                # Step 3: Extract features and biomarkers
+                status_text.text("🧮 Extracting HRV biomarkers...")
+                progress_bar.progress(50)
+                
+                features, hrv_metrics, filtered_ecg, peaks = extract_comprehensive_hrv_features(ecg_data, fs)
+                
+                # CRITICAL: Minimum R-peak validation
+                min_peaks_required = max(10, segment_duration // 6)  # At least 10 peaks, or ~1 peak per 6s
+                if len(peaks) < min_peaks_required:
+                    st.error(f"❌ **Insufficient Signal Quality**")
+                    st.error(f"Detected only **{len(peaks)} R-peaks**, need at least **{min_peaks_required}** for reliable analysis.")
+                    st.warning("⚠️ **Possible causes:**")
+                    st.markdown("""
+                    - Poor electrode contact
+                    - Wrong ECG channel selected
+                    - Excessive noise in recording
+                    - Non-ECG signal uploaded
+                    
+                    **Recommendation:** Check signal quality and try again.
+                    """)
+                    progress_bar.empty()
+                    status_text.empty()
+                    st.stop()
+                
+                # Step 4: Make prediction
+                status_text.text("🤖 Running AI prediction model...")
+                progress_bar.progress(70)
+                
+                features_reshaped = features.reshape(1, -1)
+                
+                # Apply scaler if available (CRITICAL for accuracy!)
+                if scaler is not None:
+                    features_scaled = scaler.transform(features_reshaped)
+                else:
+                    features_scaled = features_reshaped
+                    st.warning("⚠️ Scaler not loaded - using raw features")
+                
+                # Make prediction with scaled features
+                raw_prediction = model.predict(features_scaled)[0]
+                probability = model.predict_proba(features_scaled)[0]
+                
+                # Apply confidence threshold
+                high_risk_prob = probability[1]
+                threshold_prediction = 1 if high_risk_prob >= confidence_threshold else 0
+                
+                # Store in history
+                st.session_state.prediction_history.append(threshold_prediction)
+                st.session_state.probability_history.append(high_risk_prob)
+                
+                # Keep only recent history based on window size
+                if enable_smoothing:
+                    if len(st.session_state.prediction_history) > window_size:
+                        st.session_state.prediction_history = st.session_state.prediction_history[-window_size:]
+                        st.session_state.probability_history = st.session_state.probability_history[-window_size:]
+                    
+                    # Apply temporal smoothing
+                    positive_count = sum(st.session_state.prediction_history)
+                    smoothed_prediction = 1 if positive_count >= required_positive else 0
+                    
+                    # Use smoothed prediction
+                    prediction = smoothed_prediction
+                else:
+                    # No smoothing - use threshold prediction directly
+                    prediction = threshold_prediction
+                
+                # Step 5: Generate visualizations
+                status_text.text("📊 Generating visualizations...")
+                progress_bar.progress(90)
+                
+                progress_bar.progress(100)
+                status_text.text("✅ Analysis complete!")
+                
+                # Clear progress
+                import time
+                time.sleep(0.5)
+                progress_bar.empty()
+                status_text.empty()
+                
+                # ==================== RESULTS SECTION ====================
+                st.markdown("---")
+                st.markdown("# 📊 ANALYSIS RESULTS")
+                
+                # ========== PREDICTION HISTORY DISPLAY ==========
+                if len(st.session_state.prediction_history) > 1:
+                    st.markdown("### 📜 Prediction History")
+                    
+                    # Create history display
+                    history_display = []
+                    for i, (pred, prob) in enumerate(zip(
+                        st.session_state.prediction_history[-window_size if enable_smoothing else -5:],
+                        st.session_state.probability_history[-window_size if enable_smoothing else -5:]
+                    )):
+                        if pred == 1:
+                            history_display.append(f"🔴 HIGH ({prob*100:.1f}%)")
+                        else:
+                            history_display.append(f"🟢 LOW ({prob*100:.1f}%)")
+                    
+                    history_str = " → ".join(history_display)
+                    
+                    if enable_smoothing:
+                        final_msg = f"**{positive_count}/{len(st.session_state.prediction_history)}** positive"
+                        if prediction == 1:
+                            alert_msg = "→ ⚠️ **ALERT TRIGGERED**"
+                        else:
+                            alert_msg = "→ ✅ **NO ALERT**"
+                    else:
+                        final_msg = ""
+                        alert_msg = ""
+                    
+                    st.markdown(f"""
+                    <div class='glow-card' style='background: rgba(255, 255, 255, 0.7);'>
+                        <h4 style='color: #5B2E90; margin-top: 0;'>📊 Recent Predictions</h4>
+                        <p style='color: #3D1B5C; font-size: 1.1rem; margin: 10px 0;'>{history_str}</p>
+                        <p style='color: #5B2E90; font-size: 1.2rem; font-weight: 700; margin: 10px 0 0 0;'>{final_msg} {alert_msg}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown("<br>", unsafe_allow_html=True)
+                
+                # ========== SEIZURE RISK ASSESSMENT ==========
+                st.markdown("## 🎯 Seizure Risk Assessment")
+                
+                if prediction == 1:
+                    # HIGH RISK
+                    risk_prob = probability[1] * 100
+                    
+                    st.markdown(f"""
+                    <div class='risk-high'>
+                        <h1 style='color: white; margin: 0; font-size: 3rem;'>🚨 HIGH SEIZURE RISK DETECTED</h1>
+                        <p style='color: white; font-size: 1.5rem; margin: 10px 0 0 0;'>Immediate precautions required</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Risk meter
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig_risk = create_speedometer(risk_prob, "Seizure Risk Level (%)")
+                        st.plotly_chart(fig_risk, use_container_width=True)
+                    with col2:
+                        st.markdown(f"""
+                        <div class='glow-card'>
+                            <h3 style='color: #ff4757; margin-top: 0;'>⚠️ Risk Probability</h3>
+                            <p style='font-size: 3rem; font-weight: 800; color: #ff4757; margin: 10px 0;'>{risk_prob:.1f}%</p>
+                            <p style='font-size: 1.2rem; color: #3D1B5C;'>Confidence Level</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Safety instructions
+                    st.markdown("""
+                    <div class='glow-card'>
+                        <h2 style='color: #ff6b6b; margin-top: 0;'>🏥 IMMEDIATE SAFETY ACTIONS</h2>
+                        <ul style='font-size: 1.1rem; line-height: 2; color: #3D1B5C;'>
+                            <li><strong>🚫 Stop dangerous activities immediately</strong> - No driving, heights, water, machinery</li>
+                            <li><strong>🛡️ Move to safe location</strong> - Sit or lie down on floor away from hazards</li>
+                            <li><strong>📞 Alert someone immediately</strong> - Notify caregiver, family, or nearby person</li>
+                            <li><strong>💊 Take rescue medication</strong> - If prescribed and available</li>
+                            <li><strong>😌 Stay calm, breathe deeply</strong> - Stress can trigger seizures</li>
+                            <li><strong>🏥 Prepare for emergency</strong> - Have emergency contacts ready</li>
+                        </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                else:
+                    # LOW RISK
+                    safety_score = probability[0] * 100
+                    
+                    st.markdown(f"""
+                    <div class='risk-low'>
+                        <h1 style='color: white; margin: 0; font-size: 3rem;'>🟢 LOW SEIZURE RISK</h1>
+                        <p style='color: white; font-size: 1.5rem; margin: 10px 0 0 0;'>No immediate risk detected</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Safety meter
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        fig_safety = create_speedometer(safety_score, "Safety Level (%)")
+                        st.plotly_chart(fig_safety, use_container_width=True)
+                    with col2:
+                        st.markdown(f"""
+                        <div class='glow-card'>
+                            <h3 style='color: #28a745; margin-top: 0;'>✅ Safety Score</h3>
+                            <p style='font-size: 3rem; font-weight: 800; color: #28a745; margin: 10px 0;'>{safety_score:.1f}%</p>
+                            <p style='font-size: 1.2rem; color: #3D1B5C;'>Confidence Level</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Continue activities
+                    st.markdown("""
+                    <div class='glow-card'>
+                        <h2 style='color: #51cf66; margin-top: 0;'>✅ SAFE TO CONTINUE ACTIVITIES</h2>
+                        <ul style='font-size: 1.1rem; line-height: 2; color: #3D1B5C;'>
+                            <li><strong>✅ Normal activities OK</strong> - Continue regular daily activities safely</li>
+                            <li><strong>💊 Maintain medication schedule</strong> - Keep taking prescribed medications</li>
+                            <li><strong>👁️ Stay vigilant</strong> - Continue monitoring if recommended by doctor</li>
+                            <li><strong>🌟 Healthy habits</strong> - Good sleep, reduced stress, regular meals</li>
+                            <li><strong>📊 Regular monitoring</strong> - Continue periodic ECG monitoring</li>
+                        </ul>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.markdown("---")
+                
+                # ========== ECG SIGNAL VISUALIZATION ==========
+                st.markdown("## 📈 ECG Signal Analysis")
+                
+                fig_ecg = create_ecg_plot(filtered_ecg, fs, peaks)
+                st.plotly_chart(fig_ecg, use_container_width=True)
+                
+                # Signal info
+                actual_duration = len(ecg_data) / fs
+                window_end_min = window_start + (actual_duration / 60)
+                duration_match = "✅" if abs(actual_duration - segment_duration) < 1 else "⚠️"
+                st.info(f"📍 **Signal Info:** Window: {window_start:.1f}-{window_end_min:.1f} min | Duration: {actual_duration:.1f}s {duration_match} | Target: {segment_duration}s | Sampling: {fs:.0f} Hz | R-peaks: {len(peaks)}")
+                
+                st.markdown("---")
+                
+                # ========== COMPREHENSIVE HRV BIOMARKERS ==========
+                st.markdown("## 🧬 Comprehensive HRV Biomarker Analysis")
+                
+                # Create tabs for different biomarker categories
+                tab1, tab2, tab3, tab4 = st.tabs([
+                    "⏱️ Time Domain",
+                    "📊 Frequency Domain",
+                    "🔄 Nonlinear Metrics",
+                    "🔬 Signal Quality"
+                ])
+                
+                with tab1:
+                    st.markdown("### Time Domain HRV Metrics")
+                    if 'Time Domain' in hrv_metrics and 'Error' not in hrv_metrics['Time Domain']:
+                        td_metrics = hrv_metrics['Time Domain']
+                        
+                        # Display in grid
+                        col1, col2, col3 = st.columns(3)
+                        
+                        metrics_list = list(td_metrics.items())
+                        for idx, (key, value) in enumerate(metrics_list):
+                            with [col1, col2, col3][idx % 3]:
+                                # Determine color based on metric type
+                                if 'HR' in key:
+                                    color = "#28a745" if 60 <= value <= 100 else "#ff4757"
+                                elif key == 'SDNN (ms)':
+                                    color = "#28a745" if 20 <= value <= 100 else "#ff4757"
+                                else:
+                                    color = "#5B2E90"
+                                
+                                st.markdown(f"""
+                                <div class='metric-card'>
+                                    <h4 style='color: {color}; margin: 0; font-size: 0.9rem;'>{key}</h4>
+                                    <p style='font-size: 2rem; font-weight: 800; margin: 10px 0; color: {color};'>{value:.2f}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
+                    else:
+                        st.warning("⚠️ Insufficient data for time domain analysis")
+                
+                with tab2:
+                    st.markdown("### Frequency Domain HRV Metrics")
+                    if 'Frequency Domain' in hrv_metrics and 'Error' not in hrv_metrics['Frequency Domain']:
+                        fd_metrics = hrv_metrics['Frequency Domain']
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        metrics_list = list(fd_metrics.items())
+                        for idx, (key, value) in enumerate(metrics_list):
+                            with [col1, col2, col3][idx % 3]:
+                                st.markdown(f"""
+                                <div class='metric-card'>
+                                    <h4 style='color: #5B2E90; margin: 0; font-size: 0.9rem;'>{key}</h4>
+                                    <p style='font-size: 2rem; font-weight: 800; margin: 10px 0; color: #5B2E90;'>{value:.2f}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        
+                        # LF/HF interpretation
+                        lf_hf = fd_metrics.get('LF/HF Ratio', 0)
+                        if lf_hf > 2:
+                            balance = "High sympathetic activity (stress)"
+                            color = "#ff4757"
+                        elif lf_hf < 0.5:
+                            balance = "High parasympathetic activity (relaxed)"
+                            color = "#28a745"
+                        else:
+                            balance = "Balanced autonomic function"
+                            color = "#28a745"
+                        
+                        st.markdown(f"""
+                        <div class='glow-card' style='background: rgba(255, 255, 255, 0.7);'>
+                            <h4 style='color: {color};'>💡 Autonomic Balance Interpretation</h4>
+                            <p style='color: #3D1B5C; font-size: 1.1rem;'><strong>LF/HF Ratio: {lf_hf:.2f}</strong> → {balance}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.warning("⚠️ Insufficient data for frequency domain analysis")
+                
+                with tab3:
+                    st.markdown("### Nonlinear HRV Metrics")
+                    if 'Nonlinear' in hrv_metrics and 'Error' not in hrv_metrics['Nonlinear']:
+                        nl_metrics = hrv_metrics['Nonlinear']
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        metrics_list = list(nl_metrics.items())
+                        for idx, (key, value) in enumerate(metrics_list):
+                            with [col1, col2, col3][idx % 3]:
+                                st.markdown(f"""
+                                <div class='metric-card'>
+                                    <h4 style='color: #5B2E90; margin: 0; font-size: 0.9rem;'>{key}</h4>
+                                    <p style='font-size: 2rem; font-weight: 800; margin: 10px 0; color: #5B2E90;'>{value:.2f}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        
+                        st.markdown("""
+                        <div class='glow-card' style='background: rgba(255, 255, 255, 0.7);'>
+                            <h4 style='color: #5B2E90;'>💡 Poincaré Plot Explanation</h4>
+                            <p style='color: #3D1B5C;'>
+                            <strong>SD1:</strong> Short-term HRV variability (fast changes)<br>
+                            <strong>SD2:</strong> Long-term HRV variability (slow changes)<br>
+                            <strong>SD1/SD2:</strong> Balance between short and long-term variability
+                            </p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.warning("⚠️ Insufficient data for nonlinear analysis")
+                
+                with tab4:
+                    st.markdown("### Signal Quality Metrics")
+                    if 'Signal Quality' in hrv_metrics:
+                        sq_metrics = hrv_metrics['Signal Quality']
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        metrics_list = list(sq_metrics.items())
+                        for idx, (key, value) in enumerate(metrics_list):
+                            with [col1, col2, col3, col4][idx % 4]:
+                                # Special formatting for R-peaks
+                                if 'R-peaks' in key:
+                                    display_value = f"{int(value)}"
+                                    # Color code based on quality
+                                    if value >= 20:
+                                        color = "#28a745"  # Green for excellent
+                                    elif value >= 10:
+                                        color = "#ffc107"  # Yellow for acceptable
+                                    else:
+                                        color = "#ff4757"  # Red for poor
+                                else:
+                                    display_value = f"{value:.3f}"
+                                    color = "#5B2E90"  # Purple for other metrics
+                                
+                                st.markdown(f"""
+                                <div class='metric-card'>
+                                    <h4 style='color: {color}; margin: 0; font-size: 0.9rem;'>{key}</h4>
+                                    <p style='font-size: 2rem; font-weight: 800; margin: 10px 0; color: {color};'>{display_value}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        
+                        # Signal quality assessment
+                        r_peaks = sq_metrics.get('R-peaks Detected', 0)
+                        if r_peaks >= 20:
+                            quality_msg = "✅ Excellent signal quality - reliable analysis"
+                            quality_color = "#28a745"
+                        elif r_peaks >= 10:
+                            quality_msg = "⚠️ Good signal quality - analysis acceptable"
+                            quality_color = "#ffc107"
+                        else:
+                            quality_msg = "❌ Poor signal quality - results may be unreliable"
+                            quality_color = "#ff4757"
+                        
+                        st.markdown(f"""
+                        <div class='glow-card' style='background: rgba(255, 255, 255, 0.7);'>
+                            <h4 style='color: {quality_color};'>💡 Signal Quality Assessment</h4>
+                            <p style='color: #3D1B5C; font-size: 1.1rem;'>{quality_msg}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                st.markdown("---")
+                
+                # Model information
+                st.markdown("""
+                <div class='glow-card' style='text-align: center;'>
+                    <h3 style='margin: 0 0 10px 0; color: #5B2E90;'>🤖 AI Model Information</h3>
+                    <p style='color: #3D1B5C; margin: 5px 0;'><strong>Model Version:</strong> v12 Hybrid ECG</p>
+                    <p style='color: #3D1B5C; margin: 5px 0;'><strong>Sensitivity:</strong> 40% | <strong>Specificity:</strong> 72%</p>
+                    <p style='color: #3D1B5C; margin: 5px 0;'><strong>Features Analyzed:</strong> 15 biomarkers</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+        except Exception as e:
+            st.error(f"⚠️ Analysis Error: {str(e)}")
+            import traceback
+            st.error(traceback.format_exc())
+            progress_bar.empty()
+            status_text.empty()
 
 # Footer
-st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("---")
 st.markdown("""
-<div style="text-align: center; color: #a0a0a0; padding: 2rem;">
-    <p style="font-weight: 600; font-size: 1.1rem; color: #ffffff;">NeuroAlert v6.0 | ECG-Based Seizure Prediction</p>
-    <p style="margin-top: 0.5rem; font-size: 0.9rem;">Phase 1: CHB-MIT (28%) | Phase 2: Siena In Progress (Target: 70%)</p>
-    <p style="margin-top: 1rem; font-size: 0.85rem;">⚠️ Research Use Only • Not for Clinical Diagnosis</p>
+<div class='glow-card' style='text-align: center;'>
+    <h3 style='margin: 0 0 15px 0; color: #5B2E90;'>🧠 NeuroAlert v12</h3>
+    <p style='margin: 5px 0; color: #3D1B5C;'><strong>AI-Powered Seizure Risk Prediction System</strong></p>
+    <p style='margin: 5px 0; font-size: 0.9rem; opacity: 0.8; color: #5B2E90;'>For research and educational purposes only • Not for clinical use</p>
+    <p style='margin: 5px 0; font-size: 0.9rem; opacity: 0.8; color: #5B2E90;'>Comprehensive HRV biomarker analysis with AI prediction</p>
 </div>
 """, unsafe_allow_html=True)
